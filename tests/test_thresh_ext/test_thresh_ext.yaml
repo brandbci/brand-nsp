@@ -34,6 +34,6 @@ nodes:
         n_channels: 96
         seq_len: 30
         data_type: int16
-        duration: 30
+        duration: 35
         sample_rate: 1000
-        stop_graph_when_done: False
+        stop_graph_when_done: True
