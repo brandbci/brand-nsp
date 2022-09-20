@@ -1,8 +1,9 @@
 # %%
-import numpy as np
-import pickle
-import matplotlib.pyplot as plt
 import os
+import pickle
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 # %%
 data_path = 'data/220920T1849_test_thresh_ext.pkl'
@@ -41,6 +42,6 @@ axes[1].set_xlabel('Sample Index')
 axes[1].set_ylabel('Latency (ms)')
 
 plt.tight_layout()
-plt.savefig(os.path.join(fig_dir, f'{run_id}_latency.pdf'))
+plt.savefig(os.path.join(fig_dir, f'{run_id}_latency.png'))
 
 # %%
