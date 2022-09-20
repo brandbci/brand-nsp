@@ -1,0 +1,39 @@
+participant_id: sim
+graph_name: test_thresh_ext
+session_description: Benchmark timing for threshold extraction
+
+# node-specific parameters
+nodes:
+  - name:         thresholdExtraction
+    nickname:     thresholdExtraction
+    module:       ../brand-modules/brand-nsp
+    run_priority:               99
+    cpu_affinity:               6-9
+    parameters:
+        log:                    INFO
+        pack_per_call:          1       # number of redis packets to pull per loop
+        thresh_mult:            -4.25   # threshold Values
+        thresh_calc_len:        2000    # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+        butter_lowercut:        250     # lower cutoff freq of bandpass filter
+        butter_uppercut:        7500    # upper cutoff freq of bandpass filter
+        butter_order:           2       # butterworth filter order
+        enable_CAR:             True
+        output_filtered:        False   # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+        input_stream:
+            name:               thresh_ext_tester
+            chan_per_stream:    96 # number of channels
+            samp_per_stream:    30 # number of samples per channel per redis entry
+            samp_freq:          30000
+  - name:         thresh_ext_tester
+    nickname:     thresh_ext_tester
+    module:       ../brand-modules/brand-nsp
+    run_priority:               99
+    cpu_affinity:               4-5
+    parameters:
+        log: INFO
+        n_channels: 96
+        seq_len: 30
+        data_type: int16
+        duration: 30
+        sample_rate: 1000
+        stop_graph_when_done: False

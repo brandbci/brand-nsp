@@ -24,6 +24,11 @@ class ThresholdExtraction(BRANDNode):
         self.thresh_mult = self.parameters['thresh_mult']
         # amount of data to use for threshold calculation
         self.thresh_calc_len = self.parameters['thresh_calc_len']
+        # number of Redis packets to read on each iteration
+        self.pack_per_call = self.parameters['pack_per_call']
+        # whether to export the filtered data
+        self.output_filtered = self.parameters['output_filtered']
+
         # parameters of the input stream
         self.input_params = self.parameters['input_stream']
         self.input_stream = self.input_params['name']
@@ -31,10 +36,6 @@ class ThresholdExtraction(BRANDNode):
         self.samp_per_stream = self.input_params['samp_per_stream']
         # number of channels
         self.n_channels = self.input_params['chan_per_stream']
-        # number of Redis packets to read on each iteration
-        self.pack_per_call = self.input_params['pack_per_call']
-        # whether to export the filtered data
-        self.output_filtered = self.input_params['output_filtered']
 
         # build filtering pipeline
         self.filter_func, self.sos, self.zi = self.build_filter()
@@ -53,7 +54,7 @@ class ThresholdExtraction(BRANDNode):
 
     def build_filter(self):
         # order of the butterworth filter
-        but_order = self.parameters['but_order']
+        but_order = self.parameters['butter_order']
         # lower cutoff frequency
         but_low = self.parameters['butter_lowercut']
         # upper cutoff frequency
@@ -78,9 +79,8 @@ class ThresholdExtraction(BRANDNode):
             zi[:, ii, :] = zi_flat
 
         # select the filtering function
-        message = (
-            f'Loading {but_order :d} order, [{but_low :d} {but_high :d}]'
-            ' hz bandpass causal filter')
+        message = (f'Loading {but_order :d} order, '
+                   f'[{but_low :d} {but_high :d}] hz bandpass causal filter')
         if demean:
             message += ' with CAR'
         logging.info(message)
@@ -90,7 +90,8 @@ class ThresholdExtraction(BRANDNode):
 
     def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream,
                     n_channels, sos, zi):
-        reply = xread_count(stream=stream,
+        reply = xread_count(self.r,
+                            stream=stream,
                             startid=0,
                             count=thresh_cal_len,
                             block=0)
@@ -107,7 +108,7 @@ class ThresholdExtraction(BRANDNode):
         for _, entry_data in entries:  # put it all into an array
             i_end = i_start + samp_per_stream
             read_arr[:, i_start:i_end] = np.reshape(
-                np.frombuffer(entry_data, np.int16),
+                np.frombuffer(entry_data[b'samples'], np.int16),
                 (n_channels, samp_per_stream))
             read_times[i_start:i_end] = np.frombuffer(
                 entry_data[b'timestamps'], np.uint32)
@@ -117,6 +118,7 @@ class ThresholdExtraction(BRANDNode):
         thresholds = (thresh_mult *
                       np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
                           -1, 1)
+        logging.info('Thresholds are set')
         return thresholds
 
     def run(self):
@@ -174,7 +176,6 @@ class ThresholdExtraction(BRANDNode):
                 # pack into a byte object and put into the thresh crossings
                 # dict
                 cross_dict[b'timestamps'] = samp_times[0].tobytes()
-                crossings[:, 0] = np.zeros((self.n_channels, 1))
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
                 cross_dict[b'crossings'] = np.any(crossings, axis=1).astype(
