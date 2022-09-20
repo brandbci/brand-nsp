@@ -23,7 +23,7 @@ r = redis.Redis()
 
 # %%
 # Start graph
-print(f'Starting graph from {graph} as JSON')
+print(f'Starting graph from {graph_path} as JSON')
 last_id = r.xadd('supervisor_ipstream', {
     'commands': 'startGraph',
     'graph': json.dumps(graph)
