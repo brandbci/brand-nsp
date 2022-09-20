@@ -1,324 +1,259 @@
 #!/usr/bin/env python
-# thresholdExtraction.py
-# Kevin Bodkin
-# July 2020
+# -*- coding: utf-8 -*-
+# threshold_extraction.py
+# Kevin Bodkin, Yahia Ali
 
-
+import gc
+import logging
+import signal
+import sys
+import time
 
 import numpy as np
-from scipy import signal as spSignal
-from scipy import io
-import os, sys, signal
-from redis import Redis
-from struct import unpack, pack
-from datetime import datetime as dt
-from time import sleep, time
-import argparse
-
-# need to take more advantage of cython
-"""import cython
-cimport numpy as np"""
+import scipy.signal
+from brand import BRANDNode
+from brand.redis import xread_count
 
 
-# bring in redisTools
-from brand import *
+class ThresholdExtraction(BRANDNode):
 
-# node name
-nodeName = "thresholdExtraction"
+    def __init__(self):
+        super().__init__()
 
-###############################################################
-## Define supporting functions
-###############################################################
+        # threshold multiplier, usually around -5
+        self.thresh_mult = self.parameters['thresh_mult']
+        # amount of data to use for threshold calculation
+        self.thresh_calc_len = self.parameters['thresh_calc_len']
+        # parameters of the input stream
+        self.input_params = self.parameters['input_stream']
+        self.input_stream = self.input_params['name']
+        # number of samples per channel per redis entry
+        self.samp_per_stream = self.input_params['samp_per_stream']
+        # number of channels
+        self.n_channels = self.input_params['chan_per_stream']
+        # number of Redis packets to read on each iteration
+        self.pack_per_call = self.input_params['pack_per_call']
+        # whether to export the filtered data
+        self.output_filtered = self.input_params['output_filtered']
 
-# clean exit code
-def signal_handler(sig,frame): # setup the clean exit code with a warning
-    print(f'{nodeName} SIGINT received, Exiting')
-    sys.exit(0)
+        # build filtering pipeline
+        self.filter_func, self.sos, self.zi = self.build_filter()
 
+        # calculate spike thresholds from the start of the data
+        self.thresholds = self.calc_thresh(self.input_stream, self.thresh_mult,
+                                           self.thresh_calc_len,
+                                           self.samp_per_stream,
+                                           self.n_channels, self.sos, self.zi)
+        # log thresholds to database
+        thresolds_enc = self.thresholds.astype(np.int16).tobytes()
+        self.r.xadd('thresholds', {b'thresholds': thresolds_enc})
 
-# place the sigint signal handler
-signal.signal(signal.SIGINT, signal_handler)
+        # terminate on SIGINT
+        signal.signal(signal.SIGINT, self.terminate)
 
+    def build_filter(self):
+        # order of the butterworth filter
+        but_order = self.parameters['but_order']
+        # lower cutoff frequency
+        but_low = self.parameters['butter_lowercut']
+        # upper cutoff frequency
+        but_high = self.parameters['butter_uppercut']
+        # enable common average reference
+        demean = self.parameters['enable_CAR']
+        # sampling rate of the input
+        fs = self.parameters['input_stream']['samp_freq']
 
-# ------------------------------------------------------------
-# turn the bytecode dict into a python array
-def numpy_import(inDict, dataArray, sampTimes, packetLength, numChannels): 
-    # wow this is so much easier in the array method :)
-    dataArray[:,:] = np.reshape(np.frombuffer(inDict[b'samples'], np.short),(numChannels,packetLength))
-    sampTimes[:] = np.array(np.frombuffer(inDict[b'timestamps'], np.uint32))
+        # set up filter
+        nyq = .5 * fs
+        sos = scipy.signal.butter(but_order, [but_low / nyq, but_high / nyq],
+                                  btype='bandpass',
+                                  analog=False,
+                                  output='sos')  # set up a filter
+        # initialize the state of the filter
+        zi_flat = scipy.signal.sosfilt_zi(sos)
+        # so that we have the right number of dimensions
+        zi = np.zeros((zi_flat.shape[0], self.n_channels, zi_flat.shape[1]))
+        # filter initialization
+        for ii in range(0, self.n_channels):
+            zi[:, ii, :] = zi_flat
 
+        # select the filtering function
+        message = (
+            f'Loading {but_order :d} order, [{but_low :d} {but_high :d}]'
+            ' hz bandpass causal filter')
+        if demean:
+            message += ' with CAR'
+        logging.info(message)
+        filter_func = get_filter_func(demean)
 
-# -----------------------------------------------------------
+        return filter_func, sos, zi
 
-# prep the filtered and thresholded data for export
-def numpy_export(crossDict, rConnection, filtDict = None):
-    ''' 
-    this needs to take the threshold crossing times and filtered data and put it into the Redis stream
-    Threshold crossings needs just the time and channel. Since we're thresholding a ms at a time,
-    we can just use the ts at the start and end to align it for offline analysis
-    
-    Since we sometimes have two different streams we're pushing into, we'll do it with
-    a pipeline '''
+    def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream,
+                    n_channels, sos, zi):
+        reply = xread_count(stream=stream,
+                            startid=0,
+                            count=thresh_cal_len,
+                            block=0)
 
-    p = rConnection.pipeline() # create a new pipeline
-    p.xadd('thresholdCrossings', crossDict) # thresholdCrossings stream -- assuming I've already set it up properly below
+        _, entries = reply[0]  # get the list of entries
 
-    if filtDict is not None: # if we're storing the filtered data
-#         print(filtDict)
-        p.xadd('filteredCerebusAdapter', filtDict) # add the filtered stuff to the pipeline
-     
-    p.execute() # send it brah
+        read_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
+                            dtype=np.float32)
+        filt_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
+                            dtype=np.float32)
+        read_times = np.empty((thresh_cal_len * samp_per_stream))
 
+        i_start = 0
+        for _, entry_data in entries:  # put it all into an array
+            i_end = i_start + samp_per_stream
+            read_arr[:, i_start:i_end] = np.reshape(
+                np.frombuffer(entry_data, np.int16),
+                (n_channels, samp_per_stream))
+            read_times[i_start:i_end] = np.frombuffer(
+                entry_data[b'timestamps'], np.uint32)
+            i_start = i_end
 
-
-# -----------------------------------------------------------
-### Various filter versions
-# rather than having a logic process inside of the loop, we just
-# initialize to a different function depending on what we are
-# wanting to do.
-
-
-# causal filtering, no demean
-def causal_noDemean_data(data, filtData, sos, zi): 
-    filtData[:,:],zi[:,:] = spSignal.sosfilt(sos, data, axis=1, zi=zi)
-
-
-# causal filtering, demean
-def causal_demean_data(data, filtData, sos, zi):
-    data-= data.mean(axis=0,keepdims=True)
-    filtData[:,:],zi[:,:] = spSignal.sosfilt(sos,data, axis=1, zi=zi)
-
-
-# -----------------------------------------------------------
-
-
-# calculate threshold values
-def calc_thresh(r, streamName, threshMult, readCalls, packetLength, numChannels, sos, zi):
-    # starting 100 ms in, just because it feels right
-    reply = r.xread({streamName:100}, count = readCalls, block = readCalls * 10) # wait 10 times as long as the length of the read, then fail
-    
-    if len(reply) == 0: # if we didn't get anything back from the read attempt
-        return -1
-    
-
-    try:
-        _, reply = reply[0] # extract stuff from the list
-        
-        readArray = np.empty((numChannels,readCalls * packetLength),dtype=np.float32)
-        filtArray = np.empty((numChannels,readCalls * packetLength),dtype=np.float32)
-        readTimes = np.empty((readCalls*packetLength))
-        
-        indStart = 0
-        for entry in reply: # switch it all into an array
-            indEnd = indStart + packetLength
-            numpy_import(entry[1], readArray[:,indStart:indEnd], readTimes[indStart:indEnd], packetLength, numChannels) 
-            indStart = indEnd
-        
-        filter_data(readArray,filtArray,sos,zi)
-        thresholds = (threshMult * np.sqrt(np.mean(np.square(filtArray),axis=1))).reshape(-1,1)
+        self.filter_func(read_arr, filt_arr, sos, zi)
+        thresholds = (thresh_mult *
+                      np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
+                          -1, 1)
         return thresholds
-    except:
-        return -1
-    
 
-# -----------------------------------------------------------
+    def run(self):
+        # get class variables
+        input_stream = self.input_stream
+        output_filtered = self.output_filtered
+        pack_per_call = self.pack_per_call
+        samp_per_stream = self.samp_per_stream
+        sos = self.sos
+        thresholds = self.thresholds
+        zi = self.zi
 
-def pack_string_parser(ioDict):
-    if ioDict['sample_type'] in ['int16', 'short']:
-        packString = 'h'
-    elif ioDict['sample_type'] in ['int32', 'int', 'Int']:
-        packString = 'i'
-    elif ioDict['sample_type'] in ['uInt32', 'uInt']: 
-        packString = 'I'
-    elif ioDict['sample_type'] == 'char':
-        packString = 'b'
-    else:
-        return -1
-    
-    # output string = <#values><var type> -- 10I, 960h etc
-    packString = str(ioDict['chan_per_stream'] * ioDict['samp_per_stream']) + packString
-    return packString
+        # initialize arrays
+        data_buffer = np.zeros(
+            (self.n_channels, samp_per_stream * pack_per_call),
+            dtype=np.float32)
+        filt_buffer = np.zeros_like(data_buffer)
+        crossings = np.zeros_like(data_buffer)
+        samp_times = np.zeros(samp_per_stream * pack_per_call, dtype=np.uint32)
+
+        # initialize stream entries
+        cross_dict = {}
+        filt_dict = {}
+
+        # initialize xread stream dictionary
+        input_stream_dict = {input_stream: '$'}
+
+        # set timeout
+        timeout = 500
+
+        while True:
+            # wait to get data from cerebus stream, then parse it
+            xread_receive = self.r.xread(input_stream_dict,
+                                         block=timeout,
+                                         count=pack_per_call)
+
+            # only run this if we have data
+            if len(xread_receive) >= pack_per_call:
+                indStart = 0
+                # run each entry individually
+                for entry_id, entry_data in xread_receive[0][1]:
+                    indEnd = indStart + samp_per_stream
+                    data_buffer[:, indStart:indEnd] = np.reshape(
+                        np.frombuffer(entry_data[b'samples'], np.int16),
+                        (self.n_channels, samp_per_stream))
+                    samp_times[indStart:indEnd] = np.frombuffer(
+                        entry_data[b'timestamps'], np.uint32)
+                    indStart = indEnd
+
+                # filter the data and find threshold times
+                self.filter_func(data_buffer, filt_buffer, sos, zi)
+
+                # is there a threshold crossing in the last ms
+                # find for each channel along the first dimension, keep dims,
+                # pack into a byte object and put into the thresh crossings
+                # dict
+                cross_dict[b'timestamps'] = samp_times[0].tobytes()
+                crossings[:, 0] = np.zeros((self.n_channels, 1))
+                crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
+                                    (filt_buffer[:, :-1] >= thresholds))
+                cross_dict[b'crossings'] = np.any(crossings, axis=1).astype(
+                    np.int16).tobytes()
+
+                # Redis
+                p = self.r.pipeline()  # create a new pipeline
+
+                # log timestamps
+                time_now = np.uint64(time.monotonic_ns()).tobytes()
+                cross_dict[b'BRANDS_time'] = time_now
+
+                # thresholdCrossings stream
+                p.xadd('thresholdCrossings', cross_dict)
+                # filtered data stream
+                if output_filtered:
+                    # if we're storing the filtered data
+                    filt_dict[b'timestamps'] = samp_times.tobytes()
+                    filt_dict[b'samples'] = filt_buffer.astype(
+                        np.int16).tobytes()
+                    filt_dict[b'BRANDS_time'] = time_now
+                    # add the filtered stuff to the pipeline
+                    p.xadd('filteredCerebusAdapter', filt_dict)
+
+                # write to Redis
+                p.execute()
+
+                # update key to be the entry number of last item in list
+                input_stream_dict[input_stream] = entry_id
+            else:
+                logging.warning("No neural data has been received in the"
+                                f" last {timeout} ms")
+
+    def terminate(self, *_):
+        logging.info('SIGINT received, Exiting')
+        gc.collect()
+        sys.exit(0)
 
 
-###############################################################
-## Set up argparser so we can cleanly pull from the command line
-###############################################################
+# Filtering functions
+def get_filter_func(demean):
+    """
+    Get a function for filtering the data
+
+    Parameters
+    ----------
+    demean : bool
+        Whether to apply a common average reference before filtering
+    """
+
+    def filter_func(data, filt_data, sos, zi):
+        """
+        causal filtering
+
+        Parameters
+        ----------
+        data : array_like
+            An N-dimensional input array.
+        filt_data : ndarray
+            Array to store the output of the digital filter.
+        sos : array_like
+            Array of second-order filter coefficients
+        zi : array_like
+            Initial conditions for the cascaded filter delays
+        """
+        if demean:
+            data[:, :] = data - data.mean(axis=0, keepdims=True)
+        filt_data[:, :], zi[:, :] = scipy.signal.sosfilt(sos,
+                                                         data,
+                                                         axis=1,
+                                                         zi=zi)
+
+    return filter_func
+
+
 if __name__ == '__main__':
-    argDesc = """
-            Python script to find threshold crossings in raw cortical data. It
-            filters and finds timepoints when the input signal goes below the 
-            calculated value."""
-    
-    parser = argparse.ArgumentParser(description=argDesc)
-    # only argument we have right now is the yaml path location, which defaults to the sharedDev location
-    # we should consider having default yamls or something for testing.
-    parser.add_argument("yaml", help="path to graph YAML settings file")
-    args = parser.parse_args()
-    graphYAML = args.yaml
+    gc.disable()  # disable garbage collection
 
+    thresh_ext = ThresholdExtraction()
+    thresh_ext.run()
 
-###############################################################
-## Set up data buffers etc
-###############################################################
-# get the list of which channel we're working with 
-signalIO = get_node_io(graphYAML, 'thresholdExtraction') 
-if len(signalIO['redis_inputs']) > 1:
-    sys.exit("We don't support more than one stream input at the moment. If you want more, program it!")
-                
-
-inStreamName = list(signalIO['redis_inputs'].keys())[0] # get the name of the input stream
-inNode = signalIO['redis_inputs'][inStreamName] # dictionary with the input stream info
-
-# parameters for data sizing etc
-numChannels =  inNode['chan_per_stream'] # number of channels
-packetLength = inNode['samp_per_stream'] # number of samples per channel per redis entry
-packString = pack_string_parser(inNode) # figure out the pack string for the redis stream
-# initialize the thresholdCrossing dictionary for writing back to the redis stream
-crossDict = {b'crossings': b'', b'timestamps': b'', b'BRANDS_time': b''} 
-filtDict = {b'timestamps': b'', b'samples': b'', b'BRANDS_time': b''}
-
-
-###############################################################
-## Prepare filters etc
-###############################################################
-
-# filter information
-nodeParameters = get_node_parameter_dump(graphYAML, 'thresholdExtraction')
-butOrder = nodeParameters['butter_order'] # order of the butterworth filter
-butLow = nodeParameters['butter_lowercut'] # lower cutoff frequency
-butHigh = nodeParameters['butter_uppercut'] # upper cutoff frequency
-demean = nodeParameters['enable_CAR'] # enable common average rejection
-causal = nodeParameters['causal_enable'] # likely only going to be doing causal filtering at the moment
-fs = inNode['samp_freq'] # this will need to be in the nodes portion then
-
-
-# set up filter
-nyq = .5 * fs
-sos = spSignal.butter(butOrder, [butLow/nyq, butHigh/nyq], btype = 'bandpass', analog=False, output='sos') # set up a filter
-zi_flat = spSignal.sosfilt_zi(sos) # initialize the state of the filter
-zi = np.zeros((zi_flat.shape[0],numChannels,zi_flat.shape[1])) # so that we have the right number of dimensions
-for ii in range(0,numChannels): # deal out the filter initialization
-   zi[:,ii,:] = zi_flat
-
-
-# set up which filtering function to use, so that we don't have to do this logic during our main loops 
-if causal and (not demean):
-    filter_data = causal_noDemean_data
-    print('[thresholdExtraction] Loading %d order, [%d %d] hz bandpass causal filter' % (butOrder, butLow, butHigh))
-
-elif causal and demean:
-    filter_data = causal_demean_data
-    print('[thresholdExtraction] Loading %d order, [%d %d] hz bandpass causal filter with CAR' % (butOrder, butLow, butHigh))
-
-elif (not causal) and (not demean):
-    filter_data = causal_noDemean_data
-    print('[thresholdExtraction] Loading %d order, [%d %d] hz bandpass causal filter. Acausal not implemented yet!' % (butOrder, butLow, butHigh))
-
-elif (not causal) and demean:
-    filter_data = causal_demean_data
-    print('[thresholdExtraction] Loading %d order, [%d %d] hz bandpass causal filter with CAR. Acausal not implemented yet!' % (butOrder, butLow, butHigh))
-
-
-
-
-# data chunks for querying from the RT rig
-numPacks = nodeParameters['pack_per_call']
-dataBuffer = np.zeros((numChannels,packetLength * numPacks),dtype=np.float32) # we'll be storing the filter state, so don't need a circular buffer
-filtBuffer = np.zeros((dataBuffer.shape),dtype=np.float32)
-sampTimes = np.zeros((packetLength*numPacks,),dtype='uint32') # noneed to run a float, we're not going to be modifiying these at all.
-
-# initial data read -- this is to allow us to test using old redis dump files
-# prevKey = 0
-prevKey = '$'
-
-# do we want to store the filtered data in Redis?
-outputFiltered = nodeParameters['output_filtered']
-if outputFiltered:
-    filtDict = {b'timestamps':b'',b'samples':b''}
-
-
-###############################################################
-## main loop
-###############################################################
-
-# -----------------------------------------------------------
-# connect to Redis -- using redisTools
-r = initializeRedisFromYAML(graphYAML,'thresholdExtraction')
-print('[thresholdExtraction] entering main loop')
-
-
-# thresholding settings
-threshMult = nodeParameters['thresh_mult'] # threshold multiplier, usually around -5 
-readCalls = nodeParameters['thresh_calc_len'] # make sure we have enough data to work with
-
-thresholds = calc_thresh(r, inStreamName, threshMult, readCalls, packetLength, numChannels, sos, zi) # get the array
-if type(thresholds) == int:
-    print(f"[{nodeName}] Did not receive neural data to calculate thresholds. Exiting")
-    exit(1)
-
-r.xadd('thresholds',{b'thresholds':thresholds.astype('short').tobytes()}) # push it into a new redis stream. 
-# interesting note for putting data back into redis: we don't have to use pack, since it's already stored as a byte object in numpy. 
-# wonder if we can take advantage of that for the unpacking process too
-
-
-
-
-while True:
-    # wait to get data from cerebus stream, then parse it
-    #  xread is a bit of a pain: it outputs data as a list of tuples holding a dict
-    xread_receive = r.xread({inStreamName:prevKey}, block=50, count=numPacks) # wait up to fifty ms
-    
-    if len(xread_receive) >= numPacks: # only run this if we have data
-    
-        prevKey = xread_receive[0][1][-1][0] # entry number of last item in list
-        indStart = 0
-        for xread_tuple in xread_receive[0][1]: # run each tuple individually
-            indEnd = indStart+packetLength
-            numpy_import(xread_tuple[1], dataBuffer[:,indStart:indEnd], sampTimes[indStart:indEnd], packetLength, numChannels)
-            indStart = indEnd
-
-        # filter the data and find threshold times
-        filter_data(dataBuffer, filtBuffer, sos, zi)
-
-        # is there a threshold crossing in the last ms
-        # find for each channel along the first dimension, keep dims, pack into a byte object and put into the thresh crossings dict
-        crossDict[b'timestamps'] = sampTimes[0].tobytes()
-        crossings = np.append(np.zeros((numChannels,1)),((filtBuffer[:,1:] < thresholds) & (filtBuffer[:,:-1] >= thresholds)),axis=1)
-        crossDict[b'crossings'] = np.any(crossings, axis=1).astype('short').tobytes()
-   
-        # log timestamps
-        time_now = np.float64(time()).tobytes()
-        crossDict[b'BRANDS_time'] = time_now
-
-        # send data back to the streams. filtered if necessary
-        if outputFiltered:
-            filtDict[b'timestamps'] = sampTimes.tobytes()
-            filtDict[b'samples'] = filtBuffer.astype('short').tobytes()
-            filtDict[b'BRANDS_time'] = time_now
-            numpy_export(crossDict, r, filtDict=filtDict)
-        else:
-            numpy_export(crossDict, r)
-    
-    else: 
-        print(f"[{nodeName}] No neural data has been received in the last 50 ms")
-
-    # check our loop timing
-    '''tDelta = [dt.now(), tDelta[0]]
-    tDeltaLog[loopInc] = (tDelta[0]-tDelta[1])
-    if tElapse > 1000:
-        print('[thresholdExtraction] tDelta: ', tElapse, ' us')
-    
-    loopInc += 1'''
- 
-
-'''
-print('Mean loop time: ', np.mean(tDeltaLog))
-print('Max loop time: ', np.max(tDeltaLog))
-print('Min loop time: ', np.min(tDeltaLog))
-print('number of zeros: ', sum(tDeltaLog == 0))
-'''
-
-
-
-
-
+    gc.collect()  # run garbage collection

@@ -1,115 +1,18 @@
-# Variables for running the threshold extraction function
-
-parameters:
-
-###########################################
-# redis general info
-###########################################
-- name: redis_ip
-  value: 127.0.0.1
-  description: What is the IP of our Redis instance
-  static: true
-
-- name: redis_port
-  value: 6379
-  description: What is the port of our Redis instance
-  static: true
-
-
-###########################################
-# cerebus info -- maybe grab this from cerebusAdapter?
-###########################################
-
-
-- name: sampling_frequency
-  value: 30000
-  description: Frequency (Hz) the rate at which data is sampled.
-
-  
-###########################################
-# Controlling CAR
-###########################################
-
-- name: enableCAR
-  value: true
-  description: Enable common-value averaging
-
-  
-###########################################
-# Controlling Notch filtering
-###########################################
-
-- name: enableNotch60
-  value: False
-  description: Enable a notch filter at 60Hz
-
-- name: enableNotch120
-  value: False
-  description: Enable a notch filter at 120Hz
-
-- name: enableNotch180
-  value: False
-  description: Enable a notch filter at 180Hz
-
-###########################################
-# Controlling the Butterworth filter
-###########################################
-
-- name: butterworth_enable
-  value: True
-  description: Enable butterworth filtering
-
-- name: butterworth_lowercutoff
-  value: 250
-  description: Lower cutoff for the butterworth filter -- in hz
-  static: True
-
-- name: butterworth_uppercutoff
-  value: 7500
-  description: Upper cutoff for the butterworth filter
-  static: True
-
-- name: butterworth_order
-  value: 2
-  description: Order for the butterworth filtering
-
-- name: causalEnable
-  value: True
-  description: is this a causal filter
-
-##############################################################
-### Threshold crossing information
-##############################################################
-
-- name: buffer_len
-  value: 60 # double the number of samples, I guess
-  description: Length of data buffer
-
-- name: thresh_mult
-  value: -4.25
-  description: SD multiplier for calculating threshold crossings
-
-- name: thresh_read_calls
-  value: 2000
-  description: how many read calls to use to calculate the threshold crossings 
-
-
-
-##############################################################
-### cerebus packet information
-##############################################################
-
-- name: start_key
-  value: $
-  description: what key value to start reading from 
-  static: True
-
-- name: adapter_packet_num
-  value: 1
-  description: number of cerebusAdapter packets per xread call
-  static: True
-
-
-
-
-
+nodes:
+    - name:         thresholdExtraction
+      nickname:     thresholdExtraction
+      redis_outputs:                [thresholdCrossings, thresholds] # can also contain filtered data if we want
+      Parameters:
+            pack_per_call:          1       # number of redis packets to pull per loop
+            thresh_mult:            -4.25   # threshold Values
+            thresh_calc_len:        2000    # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+            butter_lowercut:        250     # lower cutoff freq of bandpass filter
+            butter_uppercut:        7500    # upper cutoff freq of bandpass filter
+            butter_order:           2       # butterworth filter order
+            enable_CAR:             True
+            output_filtered:        False    # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+            inputs_stream:
+                name:               continuousNeural
+                chan_per_stream:    96 # number of channels
+                samp_per_stream:    30 # number of samples per channel per redis entry
+                samp_freq:          30000
