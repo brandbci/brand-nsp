@@ -6,6 +6,7 @@ session_description: Test cerebus adapter
 nodes:
   - name:         cerebusAdapter
     nickname:         cerebusAdapter
+    module: ../brand-modules/brand-nsp
     redis_inputs:
     redis_outputs:                [continuousNeural]
     parameters:                   

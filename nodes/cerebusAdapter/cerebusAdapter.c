@@ -1,5 +1,5 @@
 /* cerebusAdapter.c
- * Converts cerebrus generic packets to the UDP stream
+ * Converts cerebus generic packets to the UDP stream
  *
  * The goal of this process is to convert UDP information to a Redis stream. The
  * stream has the following format:
@@ -41,7 +41,7 @@
 #define MAXSTREAMS 10 // maximum number of streams allowed -- to set up all of the arrays as necessary
 
 
-// Cerebrus packet definition, adapted from the standard Blackrock library
+// Cerebus packet definition, adapted from the standard Blackrock library
 // https://github.com/neurosuite/libcbsdk/cbhwlib/cbhwlib.h
 typedef struct cerebus_packet_header_t {
     uint32_t time;
@@ -75,7 +75,7 @@ void handler_SIGINT(int exitStatus);
 void shutdown_process();
 void print_argv(int, char **, size_t *);
 
-char NICKNAME[] = "cerebusAdapter-mod";
+char NICKNAME[] = "cerebusAdapter";
 char SUPERGRAPH_ID[256];
 
 int flag_SIGINT = 0;
@@ -389,22 +389,20 @@ void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
     redisReply *reply = NULL; bool bgsave_flag; int rediswritetime;
     const nx_json *supergraph_json = get_supergraph_json(c, reply, SUPERGRAPH_ID); 
     if (supergraph_json == NULL) {
-        emit_status(c, NICKNAME, NODE_FATAL_ERROR,"OOPS! There's no Supergraph that I can find. For initialization. Aborting.");
+        emit_status(c, NICKNAME, NODE_FATAL_ERROR,
+                    "No supergraph found for initialization. Aborting.");
         exit(1);
     }
 
     p->broadcast_port = get_parameter_int(supergraph_json, NICKNAME , "broadcast_port");
-    get_parameter_list_int(supergraph_json, NICKNAME, "stream_names", &p->stream_names, &p->num_streams);
+    get_parameter_list_string(supergraph_json, NICKNAME, "stream_names", &p->stream_names, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "samp_freq", &p->samp_freq, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "packet_type", &p->packet_type, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "chan_per_stream", &p->chan_per_stream, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "samp_per_stream", &p->samp_per_stream, &p->num_streams);
 
-    printf("Everything is initialized\n");
-    printf("num_stream_list: %d\n", p->num_streams);
+    printf("[%s] Initialization complete. Reading from %d streams.\n", NICKNAME, p->num_streams);
 
-    // Increment supergraph ID
-    increment_redis_id(SUPERGRAPH_ID);
     // Free memory, since all relevant information has been transffered to the parameter struct at this point
     // using memcpy and strcpy commands
     nx_json_free(supergraph_json);
@@ -415,13 +413,6 @@ void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
 void shutdown_process(graph_parameters_t *p) {
 
     printf("[%s] SIGINT received. Shutting down.\n", NICKNAME);
-
-    free(p->stream_names);
-    free(p->samp_freq);
-    free(p->packet_type);
-    free(p->chan_per_stream);
-    free(p->samp_per_stream);
-
     printf("[%s] Exiting.\n", NICKNAME);
     
     exit(0);
