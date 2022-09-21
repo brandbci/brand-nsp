@@ -1,5 +1,9 @@
 PROJECT=cerebusAdapter
 
+ifneq ($(CONDA_DEFAULT_ENV),rt)
+$(error real-time conda env (rt) not active)
+endif
+
 ROOT ?= ../..
 include $(ROOT)/setenv.mk
 
@@ -9,17 +13,19 @@ CFLAGS = -O2 $(DEFAULTFLAGS)
 CFLAGSUNOPT = -O0 $(DEFAULTFLAGS)
 CFLAGS+ = -g -O2 $(DEFAULTFLAGS)
 
-LINKS= -L$(HIREDIS_PATH)
+LINKS= -L$(HIREDIS_PATH) -L$(ROOT)/lib/nxjson/nxjson.h
 LDPATH = -Wl,-rpath=$(HIREDIS_PATH)
 LDFLAGS = -lhiredis
 
-CINCLUDE = -I$(ROOT)/lib/c_code/brands/ \
-		   -I$(HIREDIS_PATH)
+CINCLUDE = -I$(ROOT)/lib/c/brand/ \
+		   -I$(HIREDIS_PATH) \
+		   -I$(ROOT)/lib/nxjson
 
 
-CFILES = $(ROOT)/lib/c_code/brands/tools_CParser.c
+CFILES = $(ROOT)/lib/c/brand/brand.c \
+		 $(ROOT)/lib/nxjson/nxjson.c
 
-//TARGET=$(BIN_PATH)/$(PROJECT)
+
 TARGET=$(PROJECT).bin
 
 all: cerebusAdapter

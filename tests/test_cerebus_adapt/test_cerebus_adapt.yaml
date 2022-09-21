@@ -1,0 +1,19 @@
+participant_id: sim
+graph_name: test_ca
+session_description: Test cerebus adapter
+
+# node-specific parameters
+nodes:
+  - name:         cerebusAdapter
+    nickname:         cerebusAdapter
+    module: ../brand-modules/brand-nsp
+    redis_inputs:
+    redis_outputs:                [continuousNeural]
+    parameters:                   
+      broadcast_port:         51002
+      num_streams:            3
+      stream_names:           [continuousNeural]
+      samp_freq:              [30000]
+      packet_type:            [6]
+      chan_per_stream:        [96]
+      samp_per_stream:        [30]
