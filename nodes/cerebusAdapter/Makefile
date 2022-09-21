@@ -1,4 +1,4 @@
-PROJECT=cerebusAdapter-mod
+PROJECT=cerebusAdapter
 
 ifneq ($(CONDA_DEFAULT_ENV),rt)
 $(error real-time conda env (rt) not active)
@@ -17,21 +17,20 @@ LINKS= -L$(HIREDIS_PATH) -L$(ROOT)/lib/nxjson/nxjson.h
 LDPATH = -Wl,-rpath=$(HIREDIS_PATH)
 LDFLAGS = -lhiredis
 
-CINCLUDE = -I$(ROOT)/lib/c_code/brands/ \
+CINCLUDE = -I$(ROOT)/lib/c/brand/ \
 		   -I$(HIREDIS_PATH) \
-		   -I$(ROOT)/lib/nxjson \
-		   -I$(ROOT)/lib/copycat/
+		   -I$(ROOT)/lib/nxjson
 
 
-CFILES = $(ROOT)/lib/nxjson/nxjson.c \
-		 $(ROOT)/lib/copycat/brand.c 
+CFILES = $(ROOT)/lib/c/brand/brand.c \
+		 $(ROOT)/lib/nxjson/nxjson.c
 
-//TARGET=$(BIN_PATH)/$(PROJECT)
+
 TARGET=$(PROJECT).bin
 
-all: cerebusAdapter-mod
+all: cerebusAdapter
 
-cerebusAdapter-mod: cerebusAdapter.c
+cerebusAdapter: cerebusAdapter.c
 	$(CC) $(CFLAGS+) $(CINCLUDE) $(LINKS) cerebusAdapter.c $(CFILES) $(LDPATH) -o $(TARGET) $(LDFLAGS)
 
 clean:

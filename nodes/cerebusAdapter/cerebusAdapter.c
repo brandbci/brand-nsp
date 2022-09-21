@@ -27,8 +27,6 @@
  * Version 0.1
  */
 
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +35,6 @@
 #include <pthread.h> 
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include "tools_CParser.h"
 #include "hiredis.h"
 #include "brand.h"
 
@@ -87,22 +84,12 @@ int flag_SIGINT = 0;
 
 int main (int argc_main, char **argv_main) {
 
-    //debugging file output
-
-    // initialize_redis(yaml_path);
-
-
     initialize_signals();
-
-    // Uncommenting this results in bash fork error since cerebusAdapter uses Redis
-    //initialize_realtime();
 
     redisReply *reply = NULL;
     int redisWritetime;
-    redisContext *c = connect_to_redis_from_commandline_flags(argc_main, argv_main, NICKNAME);  
+    redisContext *c = parse_command_line_args_init_redis(argc_main, argv_main, NICKNAME);  
     emit_status(c, NICKNAME, NODE_STARTED, NULL);
-
-    
 
     //yaml_parameters_t yaml_parameters = {0};
     graph_parameters_t graph_parameters = {};
@@ -198,14 +185,8 @@ int main (int argc_main, char **argv_main) {
         argvlen[ii][ind_current_time]            = sprintf(argvPtr[ii][ind_current_time]  , "%s", "BRANDS_time");
         argvlen[ii][ind_udp_received_time]       = sprintf(argvPtr[ii][ind_udp_received_time]  , "%s", "udp_recv_time");
         argvlen[ii][ind_samples]                 = sprintf(argvPtr[ii][ind_samples], "%s", "samples");
-        
 
-        //argvPtr[ii] = malloc(sizeof(argv));
-        //memcpy(argvPtr[ii], argv, sizeof(argv));
-        //free(argv);
     }
-
-
 
     printf("[%s] Entering loop...\n", NICKNAME);
     
@@ -259,8 +240,6 @@ int main (int argc_main, char **argv_main) {
         cmsg_header = CMSG_FIRSTHDR(&message_header); 
         memcpy(&udp_received_time, CMSG_DATA(cmsg_header), sizeof(struct timeval));
 
-
-
         // We know that the UDP packet is organized as a series
         // of cerebus packets, so we're going to read them in sequence and decide what to do
         // cb_packet_ind is the index of the start of the cerebus packet we're reading from.
@@ -308,17 +287,10 @@ int main (int argc_main, char **argv_main) {
                     argvlen[iStream][ind_cerebus_timestamps + 1]      = sizeof(int32_t) * n[iStream];
                     argvlen[iStream][ind_current_time + 1]            = sizeof(struct timeval) * n[iStream];
                     argvlen[iStream][ind_udp_received_time + 1]       = sizeof(struct timeval) * n[iStream];
-                
-                    //printf("n = %d\n", n[iStream]);
-                    //for(int jj = 0; jj< n[iStream]; jj++)
-                        //printf("argvPtr[%d][%d] == %s\n",iStream, jj, argvPtr[iStream][jj]);
-                    /* print_neural_argv(argc, argv, argvlen); */
-                    /* return 0; */
 
                     // Everything we've done is just to get to this one line. Whew!
                     freeReplyObject(redisCommandArgv(c,  argc, (const char**) argvPtr[iStream], argvlen[iStream]));
 
-                
                     // Since we've pushed our data to Redis, restart the data collection
                     n[iStream] = 0;
                 }
@@ -326,11 +298,6 @@ int main (int argc_main, char **argv_main) {
 
             // Regardless of what type of packet we got, advance to the next cerebus packet start location
             cb_packet_ind = cb_packet_ind + sizeof(cerebus_packet_header_t) + (4 * cerebus_packet_header->dlen);
-
-
-
-
-
         }
     }
 
@@ -407,7 +374,6 @@ int initialize_socket(int broadcast_port) {
 
      printf("[%s] Socket initialized.\n",NICKNAME);
 
-
      return fd;
 } 
 
@@ -426,7 +392,8 @@ void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
         emit_status(c, NICKNAME, NODE_FATAL_ERROR,"OOPS! There's no Supergraph that I can find. For initialization. Aborting.");
         exit(1);
     }
-    get_parameter_int(supergraph_json, NICKNAME, "broadcast_poart", &p->broadcast_port);
+
+    p->broadcast_port = get_parameter_int(supergraph_json, NICKNAME , "broadcast_port");
     get_parameter_list_int(supergraph_json, NICKNAME, "stream_names", &p->stream_names, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "samp_freq", &p->samp_freq, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "packet_type", &p->packet_type, &p->num_streams);
@@ -435,15 +402,6 @@ void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
 
     printf("Everything is initialized\n");
     printf("num_stream_list: %d\n", p->num_streams);
-    // strcpy(bgsavecommand,"sudo sed -i 's/save 900 1$/save "); //regex for changing the file text and replacing it with the timeduration specified in the yaml
-    // sprintf(rediswrite_time,"%d",p->redisWritetime); 
-    // strcat(bgsavecommand,rediswrite_time); //append the rediswrite time duration
-    // strcat(bgsavecommand," 1/' /etc/redis/redis-test.conf"); //to be changed: dynamic redis-test conf setup
-    // system(bgsavecommand);
-    printf("some issues\n");
-
-// For debugging
-    // print_parameters(p);
 
     // Increment supergraph ID
     increment_redis_id(SUPERGRAPH_ID);
@@ -453,21 +411,6 @@ void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
     freeReplyObject(reply);
 }
 
-// Do we want the system to be realtime?  Setting the Scheduler to be real-time, priority 80
-// void initialize_realtime(char *yaml_path) {
-
-//     char sched_fifo_string[16] = {0};
-//     load_YAML_variable_string(NICKNAME, yaml_path, "sched_fifo", sched_fifo_string, sizeof(sched_fifo_string));
-
-//     if (strcmp(sched_fifo_string, "True") != 0) {
-//         return;
-//     }
-
-
-//     printf("[%s] Setting Real-time scheduler!\n", NICKNAME);
-//     const struct sched_param sched= {.sched_priority = 80};
-//     sched_setscheduler(0, SCHED_FIFO, &sched);
-// }
 
 void shutdown_process(graph_parameters_t *p) {
 
@@ -478,16 +421,6 @@ void shutdown_process(graph_parameters_t *p) {
     free(p->packet_type);
     free(p->chan_per_stream);
     free(p->samp_per_stream);
-
-    // printf("[%s] Setting scheduler back to baseline.\n", NICKNAME);
-    // const struct sched_param sched= {.sched_priority = 0};
-    // sched_setscheduler(0, SCHED_OTHER, &sched);
-
-    // printf("[%s] Shutting down redis.\n", NICKNAME);
-
-    // redisFree(c);
-
-
 
     printf("[%s] Exiting.\n", NICKNAME);
     
