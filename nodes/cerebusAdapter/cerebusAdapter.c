@@ -39,6 +39,7 @@
 #include <arpa/inet.h>
 #include "tools_CParser.h"
 #include "hiredis.h"
+#include "brand.h"
 
 #define MAXSTREAMS 10 // maximum number of streams allowed -- to set up all of the arrays as necessary
 
@@ -69,18 +70,16 @@ typedef struct graph_parameters_t {
 // intialize support functions
 void initialize_redis(char *yaml_path);
 void initialize_signals();
-int  initialize_socket(char *yaml_path);
-//void initialize_parameters(yaml_parameters_t *p);
-void initialize_parameters(graph_parameters_t *p, char *yaml_path);
+int  initialize_socket(int broadcast_port);
+void initialize_parameters(redisContext *c, struct graph_parameters_t *p);
 void parameter_array_parser(int is_char, char *in_string, void *array_ind);
 void initialize_realtime(char *yaml_path);
 void handler_SIGINT(int exitStatus);
 void shutdown_process();
 void print_argv(int, char **, size_t *);
 
-char PROCESS[] = "cerebusAdapter";
-
-redisContext *redis_context;
+char NICKNAME[] = "cerebusAdapter-mod";
+char SUPERGRAPH_ID[256];
 
 int flag_SIGINT = 0;
 
@@ -88,30 +87,30 @@ int flag_SIGINT = 0;
 
 int main (int argc_main, char **argv_main) {
 
-    // initializing the input arguments -- should give us the yaml name
-    if(argc_main<2){
-        printf("Please supply a path to a yaml file");
-        return 1;
-    }
-
-    char *yaml_path = argv_main[1];
-
-
     //debugging file output
 
-    initialize_redis(yaml_path);
+    // initialize_redis(yaml_path);
+
 
     initialize_signals();
 
     // Uncommenting this results in bash fork error since cerebusAdapter uses Redis
     //initialize_realtime();
 
-    int udp_fd = initialize_socket(yaml_path);
+    redisReply *reply = NULL;
+    int redisWritetime;
+    redisContext *c = connect_to_redis_from_commandline_flags(argc_main, argv_main, NICKNAME);  
+    emit_status(c, NICKNAME, NODE_STARTED, NULL);
+
+    
 
     //yaml_parameters_t yaml_parameters = {0};
-    graph_parameters_t graph_parameters;
-    initialize_parameters(&graph_parameters, yaml_path); // this is a little more complicated with a var num IOs
+    graph_parameters_t graph_parameters = {};
+    initialize_parameters(c, &graph_parameters); // this is a little more complicated with a var num IOs
+    // graph_parameters_t graph_parameters = (graph_parameters_t) {51002, 3, {"cb_gen_1"}, {30000}, {6}, {96}, {30}};
     int numStreams = graph_parameters.num_streams; //will use this a lot, so pull it out
+
+    int udp_fd = initialize_socket(graph_parameters.broadcast_port);
 
 
     // argc    : The number of arguments in argv. The calculation is:
@@ -208,7 +207,7 @@ int main (int argc_main, char **argv_main) {
 
 
 
-    printf("[%s] Entering loop...\n", PROCESS);
+    printf("[%s] Entering loop...\n", NICKNAME);
     
     // How many samples have we copied 
     int n[numStreams];  
@@ -243,13 +242,15 @@ int main (int argc_main, char **argv_main) {
         int udp_packet_size = recvmsg(udp_fd, &message_header, 0);
 
         if (flag_SIGINT) 
-            shutdown_process();
+            shutdown_process(&graph_parameters);
 
         // The timer has timed out or there was an error with the recvmsg() call
         if (udp_packet_size  <= 0) {
-            printf("[%s] timer has timed out or there was an error with the recvmsg() call!\n",PROCESS);
+            printf("[%s] timer has timed out or there was an error with the recvmsg() call!\n",NICKNAME);
             continue;
         }
+
+        printf("[%s] packet received\n",NICKNAME);
 
         // For convenience, makes it much easier to reason about
         char *udp_packet_payload = (char*) message_header.msg_iov->iov_base;
@@ -315,7 +316,7 @@ int main (int argc_main, char **argv_main) {
                     /* return 0; */
 
                     // Everything we've done is just to get to this one line. Whew!
-                    freeReplyObject(redisCommandArgv(redis_context,  argc, (const char**) argvPtr[iStream], argvlen[iStream]));
+                    freeReplyObject(redisCommandArgv(c,  argc, (const char**) argvPtr[iStream], argvlen[iStream]));
 
                 
                     // Since we've pushed our data to Redis, restart the data collection
@@ -348,41 +349,16 @@ int main (int argc_main, char **argv_main) {
 // Initialization functions
 //------------------------------------
 
-
-void initialize_redis(char *yaml_path) {
-
-    printf("[%s] Initializing Redis...\n", PROCESS);
-
-    char redis_ip[16]       = {0};
-    char redis_port[16]     = {0};
-
-    load_YAML_variable_string(PROCESS, yaml_path, "redis_ip",   redis_ip,   sizeof(redis_ip));
-    load_YAML_variable_string(PROCESS, yaml_path, "redis_port", redis_port, sizeof(redis_port));
-
-    printf("[%s] From YAML, I have redis ip: %s, port: %s\n", PROCESS, redis_ip, redis_port);
-
-    printf("[%s] Trying to connect to redis.\n", PROCESS);
-
-    redis_context = redisConnect(redis_ip, atoi(redis_port));
-    if (redis_context->err) {
-        printf("[%s] Redis connection error: %s\n", PROCESS, redis_context->errstr);
-        exit(1);
-    }
-
-    printf("[%s] Redis initialized.\n", PROCESS);
-     
-}
-
 void initialize_signals() {
 
-    printf("[%s] Attempting to initialize signal handlers.\n", PROCESS);
+    printf("[%s] Attempting to initialize signal handlers.\n", NICKNAME);
 
     signal(SIGINT, &handler_SIGINT);
 
-    printf("[%s] Signal handlers installed.\n", PROCESS);
+    printf("[%s] Signal handlers installed.\n", NICKNAME);
 }
 
-int initialize_socket(char *yaml_path) {
+int initialize_socket(int broadcast_port) {
 
     // Create a UDP socket
    	int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP ); 
@@ -414,10 +390,7 @@ int initialize_socket(char *yaml_path) {
     }
 
 
-    char broadcast_port_string[16] = {0};
-    load_YAML_variable_string(PROCESS, yaml_path, "broadcast_port", broadcast_port_string, sizeof(broadcast_port_string));
-    int broadcast_port = atoi(broadcast_port_string);
-    printf("[%s] I will be listening on port %d\n", PROCESS, broadcast_port);
+    printf("[%s] I will be listening on port %d\n", NICKNAME, broadcast_port);
 
 
     // Now configure the socket
@@ -432,116 +405,91 @@ int initialize_socket(char *yaml_path) {
         exit(EXIT_FAILURE); 
      }
 
-     printf("[%s] Socket initialized.\n",PROCESS);
+     printf("[%s] Socket initialized.\n",NICKNAME);
 
 
      return fd;
 } 
 
-void initialize_parameters(graph_parameters_t *p, char *yaml_path) {
-    char broadcast_port_string[16] = {0};
-    char num_streams_string[16] = {0};
-    char stream_names_string[256] = {0};
-    char samp_freq_string[32] = {0};
-    char packet_type_string[32] = {0};
-    char chan_per_stream_string[32] = {0};
-    char samp_per_stream_string[32] = {0};
+void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
+{
 
-    // brings in the parameters -- this returns everything as a char
-    load_YAML_variable_string(PROCESS, yaml_path, "broadcast_port",    broadcast_port_string,  sizeof(broadcast_port_string));
-    load_YAML_variable_string(PROCESS, yaml_path, "num_streams",       num_streams_string,     sizeof(num_streams_string));
-    load_YAML_variable_string(PROCESS, yaml_path, "stream_names",      stream_names_string,    sizeof(stream_names_string));
-    load_YAML_variable_string(PROCESS, yaml_path, "samp_freq",         samp_freq_string,       sizeof(samp_freq_string));
-    load_YAML_variable_string(PROCESS, yaml_path, "packet_type",       packet_type_string,     sizeof(packet_type_string));
-    load_YAML_variable_string(PROCESS, yaml_path, "chan_per_stream",   chan_per_stream_string, sizeof(chan_per_stream_string));
-    load_YAML_variable_string(PROCESS, yaml_path, "samp_per_stream",   samp_per_stream_string, sizeof(samp_per_stream_string));
-
-    // parsing the strings into usable content
-    p->num_streams =    atoi(num_streams_string);
-    p->broadcast_port = atoi(broadcast_port_string);
-    // now for the tricker ones -- with potentially multiple entries
-
-    
-
-    parameter_array_parser(1, stream_names_string, (void *) p->stream_names);
-    parameter_array_parser(0, samp_freq_string, (void *) p->samp_freq);
-    parameter_array_parser(0, packet_type_string, (void *) p->packet_type); 
-    parameter_array_parser(0, chan_per_stream_string, (void *) p->chan_per_stream); 
-    parameter_array_parser(0, samp_per_stream_string, (void *) p->samp_per_stream); 
-
-
-}
-
-
-// traverse an input string with CSVs and stores it into the array at *array_ind
-// this takes advantage of strtok_r to keep everything threadsafe, which isn't
-// defined in c99 but is in most posix implementations
-void parameter_array_parser(int is_char, char *in_string, void *array_ind) {
-    // initialize an int array and a char array
-    int intArr[MAXSTREAMS] = {0}; // set the array to zeros
-    char *charArr[MAXSTREAMS] = {0}; // can we set an array of pointers to NULL? I think so...
-    
-    char *token, *saveptr, *tempstr;// output and pointer to next location
-    const char *delim = "[', ]"; // not going to allow any spaces in, are we? 
-    int ii;
-
-    // repeatedly run through the string while we're not getting a NULL
-    // or passing beyond the length of the arrays.
-    for (ii=0, tempstr = in_string; ii<MAXSTREAMS; ii++, tempstr = NULL) {
-        token = strtok_r(tempstr, delim, &saveptr);
-        if(token == NULL){
-            break;}
-        if(is_char){
-            charArr[ii] = malloc(strlen(token));
-            strcpy(charArr[ii], token);
-            }
-        else{
-            intArr[ii] = atoi(token); // store if it's an int
-            }
-    } 
-
-    // pass back either the character or integer array
-    if(is_char){
-        memcpy(array_ind, (const void *) charArr, sizeof(charArr));
+    int n;
+    char rediswrite_time[30];
+    char bgsavecommand[200];
+    // Initialize Supergraph_ID 
+    SUPERGRAPH_ID[0] = '0';
+    // Now fetch data from the supergraph and populate entries
+    redisReply *reply = NULL; bool bgsave_flag; int rediswritetime;
+    const nx_json *supergraph_json = get_supergraph_json(c, reply, SUPERGRAPH_ID); 
+    if (supergraph_json == NULL) {
+        emit_status(c, NICKNAME, NODE_FATAL_ERROR,"OOPS! There's no Supergraph that I can find. For initialization. Aborting.");
+        exit(1);
     }
-    else {
-        memcpy(array_ind, (const void *) &intArr, sizeof(intArr));
-    }
+    get_parameter_int(supergraph_json, NICKNAME, "broadcast_poart", &p->broadcast_port);
+    get_parameter_list_int(supergraph_json, NICKNAME, "stream_names", &p->stream_names, &p->num_streams);
+    get_parameter_list_int(supergraph_json, NICKNAME, "samp_freq", &p->samp_freq, &p->num_streams);
+    get_parameter_list_int(supergraph_json, NICKNAME, "packet_type", &p->packet_type, &p->num_streams);
+    get_parameter_list_int(supergraph_json, NICKNAME, "chan_per_stream", &p->chan_per_stream, &p->num_streams);
+    get_parameter_list_int(supergraph_json, NICKNAME, "samp_per_stream", &p->samp_per_stream, &p->num_streams);
 
+    printf("Everything is initialized\n");
+    printf("num_stream_list: %d\n", p->num_streams);
+    // strcpy(bgsavecommand,"sudo sed -i 's/save 900 1$/save "); //regex for changing the file text and replacing it with the timeduration specified in the yaml
+    // sprintf(rediswrite_time,"%d",p->redisWritetime); 
+    // strcat(bgsavecommand,rediswrite_time); //append the rediswrite time duration
+    // strcat(bgsavecommand," 1/' /etc/redis/redis-test.conf"); //to be changed: dynamic redis-test conf setup
+    // system(bgsavecommand);
+    printf("some issues\n");
 
+// For debugging
+    // print_parameters(p);
+
+    // Increment supergraph ID
+    increment_redis_id(SUPERGRAPH_ID);
+    // Free memory, since all relevant information has been transffered to the parameter struct at this point
+    // using memcpy and strcpy commands
+    nx_json_free(supergraph_json);
+    freeReplyObject(reply);
 }
-
-
 
 // Do we want the system to be realtime?  Setting the Scheduler to be real-time, priority 80
-void initialize_realtime(char *yaml_path) {
+// void initialize_realtime(char *yaml_path) {
 
-    char sched_fifo_string[16] = {0};
-    load_YAML_variable_string(PROCESS, yaml_path, "sched_fifo", sched_fifo_string, sizeof(sched_fifo_string));
+//     char sched_fifo_string[16] = {0};
+//     load_YAML_variable_string(NICKNAME, yaml_path, "sched_fifo", sched_fifo_string, sizeof(sched_fifo_string));
 
-    if (strcmp(sched_fifo_string, "True") != 0) {
-        return;
-    }
+//     if (strcmp(sched_fifo_string, "True") != 0) {
+//         return;
+//     }
 
 
-    printf("[%s] Setting Real-time scheduler!\n", PROCESS);
-    const struct sched_param sched= {.sched_priority = 80};
-    sched_setscheduler(0, SCHED_FIFO, &sched);
-}
+//     printf("[%s] Setting Real-time scheduler!\n", NICKNAME);
+//     const struct sched_param sched= {.sched_priority = 80};
+//     sched_setscheduler(0, SCHED_FIFO, &sched);
+// }
 
-void shutdown_process() {
+void shutdown_process(graph_parameters_t *p) {
 
-    printf("[%s] SIGINT received. Shutting down.\n", PROCESS);
+    printf("[%s] SIGINT received. Shutting down.\n", NICKNAME);
 
-    printf("[%s] Setting scheduler back to baseline.\n", PROCESS);
-    const struct sched_param sched= {.sched_priority = 0};
-    sched_setscheduler(0, SCHED_OTHER, &sched);
+    free(p->stream_names);
+    free(p->samp_freq);
+    free(p->packet_type);
+    free(p->chan_per_stream);
+    free(p->samp_per_stream);
 
-    printf("[%s] Shutting down redis.\n", PROCESS);
+    // printf("[%s] Setting scheduler back to baseline.\n", NICKNAME);
+    // const struct sched_param sched= {.sched_priority = 0};
+    // sched_setscheduler(0, SCHED_OTHER, &sched);
 
-    redisFree(redis_context);
+    // printf("[%s] Shutting down redis.\n", NICKNAME);
 
-    printf("[%s] Exiting.\n", PROCESS);
+    // redisFree(c);
+
+
+
+    printf("[%s] Exiting.\n", NICKNAME);
     
     exit(0);
 }
