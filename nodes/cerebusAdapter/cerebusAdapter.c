@@ -231,8 +231,6 @@ int main (int argc_main, char **argv_main) {
             continue;
         }
 
-        printf("[%s] packet received\n",NICKNAME);
-
         // For convenience, makes it much easier to reason about
         char *udp_packet_payload = (char*) message_header.msg_iov->iov_base;
         
@@ -349,8 +347,8 @@ int initialize_socket(int broadcast_port) {
 
     // Set timeout for socket, so that we can handle SIGINT cleanly
     struct timeval timeout;      
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 100000;
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
     if (setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO , (char *) &timeout, sizeof(timeout)) < 0) {
         perror("[cerebusAdapter] timeout failure"); 
         exit(EXIT_FAILURE); 
@@ -411,10 +409,7 @@ void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
 
 
 void shutdown_process(graph_parameters_t *p) {
-
-    printf("[%s] SIGINT received. Shutting down.\n", NICKNAME);
-    printf("[%s] Exiting.\n", NICKNAME);
-    
+    printf("[%s] SIGINT received. Exiting.\n", NICKNAME);
     exit(0);
 }
 
