@@ -59,7 +59,7 @@ int main (int argc_main, char **argv_main) {
 
     redisReply *reply = NULL;
     int redisWritetime;
-    redisContext *c = connect_to_redis_from_commandline_flags(argc_main, argv_main, NICKNAME);  
+    redisContext *c = parse_command_line_args_init_redis(argc_main, argv_main, NICKNAME);  
     emit_status(c, NICKNAME, NODE_STARTED, NULL);
 
     //yaml_parameters_t yaml_parameters = {0};
@@ -201,8 +201,6 @@ int main (int argc_main, char **argv_main) {
             printf("[%s] timer has timed out or there was an error with the recvmsg() call!\n",NICKNAME);
             continue;
         }
-
-        printf("[%s] packet received\n",NICKNAME);
 
         // For convenience, makes it much easier to reason about
         char *udp_packet_payload = (char*) message_header.msg_iov->iov_base;
@@ -365,7 +363,7 @@ void initialize_parameters(redisContext *c, graph_parameters_t *p)
         exit(1);
     }
 
-    get_parameter_int(supergraph_json, NICKNAME , "broadcast_port", &p->broadcast_port);
+    p->broadcast_port = get_parameter_int(supergraph_json, NICKNAME , "broadcast_port");
     get_parameter_list_string(supergraph_json, NICKNAME, "stream_names", &p->stream_names, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "samp_freq", &p->samp_freq, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "packet_type", &p->packet_type, &p->num_streams);
