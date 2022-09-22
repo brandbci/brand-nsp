@@ -4,6 +4,7 @@
 # Kevin Bodkin, Yahia Ali
 
 import gc
+import json
 import logging
 import signal
 import sys
@@ -92,7 +93,7 @@ class ThresholdExtraction(BRANDNode):
                     n_channels, sos, zi):
         reply = xread_count(self.r,
                             stream=stream,
-                            startid=0,
+                            startid='$',
                             count=thresh_cal_len,
                             block=0)
 
@@ -142,6 +143,7 @@ class ThresholdExtraction(BRANDNode):
         # initialize stream entries
         cross_dict = {}
         filt_dict = {}
+        sync_dict = {'nsp_idx': int(samp_times[0])}
 
         # initialize xread stream dictionary
         input_stream_dict = {input_stream: '$'}
@@ -175,6 +177,8 @@ class ThresholdExtraction(BRANDNode):
                 # find for each channel along the first dimension, keep dims,
                 # pack into a byte object and put into the thresh crossings
                 # dict
+                sync_dict['nsp_idx'] = int(samp_times[0])
+                cross_dict[b'sync'] = json.dumps(sync_dict)
                 cross_dict[b'timestamps'] = samp_times[0].tobytes()
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
