@@ -88,7 +88,7 @@ int main (int argc_main, char **argv_main) {
 
     redisReply *reply = NULL;
     int redisWritetime;
-    redisContext *c = parse_command_line_args_init_redis(argc_main, argv_main, NICKNAME);  
+    redisContext *c = connect_to_redis_from_commandline_flags(argc_main, argv_main, NICKNAME);  
     emit_status(c, NICKNAME, NODE_STARTED, NULL);
 
     //yaml_parameters_t yaml_parameters = {0};
