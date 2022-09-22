@@ -394,7 +394,7 @@ void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
         exit(1);
     }
 
-    p->broadcast_port = get_parameter_int(supergraph_json, NICKNAME , "broadcast_port");
+    get_parameter_int(supergraph_json, NICKNAME , "broadcast_port", p->broadcast_port);
     get_parameter_list_string(supergraph_json, NICKNAME, "stream_names", &p->stream_names, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "samp_freq", &p->samp_freq, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "packet_type", &p->packet_type, &p->num_streams);
