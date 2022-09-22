@@ -56,11 +56,11 @@ typedef struct cerebus_packet_header_t {
 typedef struct graph_parameters_t {
     int broadcast_port;
     int num_streams;
-    char *stream_names[MAXSTREAMS];
-    int samp_freq[MAXSTREAMS];
-    int packet_type[MAXSTREAMS];
-    int chan_per_stream[MAXSTREAMS];
-    int samp_per_stream[MAXSTREAMS];
+    char **stream_names;
+    int *samp_freq;
+    int *packet_type;
+    int *chan_per_stream;
+    int *samp_per_stream;
 } graph_parameters_t;
 
 
