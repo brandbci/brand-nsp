@@ -1,32 +1,3 @@
-/* cerebusAdapter.c
- * Converts cerebus generic packets to the UDP stream
- *
- * The goal of this process is to convert UDP information to a Redis stream. The
- * stream has the following format:
- *
- * cerebusAdapter num_samples [string] timestamps [uint32 binary array] samples [int16 binary array] 
- * 
- * It makes use of the redisCommandArgv function, which has the form: (redis_context,  argc, (const char**) argv, argvlen));
- *
- * Here, argc is the number of strings being sent. neural_argv is the content of the string, and argvlen is the string lengths
- * for the strings. Note that Redis is binary safe, so we can store raw binaries nicely if we want.
- *
- * This function sits and blocks on a udp socket. When a new packet arrives it then creates a pointer
- * to the point of the UDP payload that we would expect to be a cerebus packet header. 
- * If it has the right data type, it copies the data from the UDP payload to populate neural_argv.
- * It keeps track of the neural_argvlen prior to submission to Redis.
- *
- * When sufficient samples have been collected (defined in the cerebusAdapter.yaml file) it then
- * writes the collected neural_argv to Redis and then starts again.
- *
- * One thing to keep in mind is that the keys for the stream will always be even numbers, and the
- * corresponding values will be odd. That's why there's so much +1 notation everywhere.
- *
- * David Brandman
- * June 2020
- * Version 0.1
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,11 +27,11 @@ typedef struct cerebus_packet_header_t {
 typedef struct graph_parameters_t {
     int broadcast_port;
     int num_streams;
-    char *stream_names[MAXSTREAMS];
-    int samp_freq[MAXSTREAMS];
-    int packet_type[MAXSTREAMS];
-    int chan_per_stream[MAXSTREAMS];
-    int samp_per_stream[MAXSTREAMS];
+    char **stream_names;
+    int *samp_freq;
+    int *packet_type;
+    int *chan_per_stream;
+    int *samp_per_stream;
 } graph_parameters_t;
 
 
@@ -68,7 +39,7 @@ typedef struct graph_parameters_t {
 void initialize_redis(char *yaml_path);
 void initialize_signals();
 int  initialize_socket(int broadcast_port);
-void initialize_parameters(redisContext *c, struct graph_parameters_t *p);
+void initialize_parameters(redisContext *c, graph_parameters_t *p);
 void parameter_array_parser(int is_char, char *in_string, void *array_ind);
 void initialize_realtime(char *yaml_path);
 void handler_SIGINT(int exitStatus);
@@ -375,7 +346,7 @@ int initialize_socket(int broadcast_port) {
      return fd;
 } 
 
-void initialize_parameters(redisContext *c, struct graph_parameters_t *p)
+void initialize_parameters(redisContext *c, graph_parameters_t *p)
 {
 
     int n;
