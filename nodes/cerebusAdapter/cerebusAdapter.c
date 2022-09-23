@@ -185,7 +185,7 @@ int main (int argc_main, char **argv_main) {
     message_header.msg_control    = msg_control_buffer;
     message_header.msg_controllen = 2000;
 
-    struct timeval current_time;
+    struct timespec current_time;
     struct timeval udp_received_time;
     struct cmsghdr *cmsg_header; // Used for getting the time UDP packet was received
 
@@ -233,8 +233,8 @@ int main (int argc_main, char **argv_main) {
                 if (cerebus_packet_header->type == graph_parameters.packet_type[iStream]) {
                     
                     // This gets the current system time
-                    gettimeofday(&current_time,NULL);
-    
+                    clock_gettime(CLOCK_MONOTONIC, &current_time);
+                    
                     // Copy the timestamp information into argvPtr
                     memcpy( &argvPtr[iStream][ind_cerebus_timestamps + 1][n[iStream] * sizeof(uint32_t)],      &cerebus_packet_header->time,  sizeof(uint32_t));
                     memcpy( &argvPtr[iStream][ind_current_time + 1][n[iStream] * sizeof(struct timeval)],      &current_time,                 sizeof(struct timeval));
