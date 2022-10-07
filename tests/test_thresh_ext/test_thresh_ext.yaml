@@ -15,10 +15,12 @@ nodes:
         thresh_mult:            -4.25   # threshold Values
         thresh_calc_len:        2000    # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
         butter_lowercut:        250     # lower cutoff freq of bandpass filter
-        butter_uppercut:        7500    # upper cutoff freq of bandpass filter
-        butter_order:           2       # butterworth filter order
+        butter_uppercut:        ~    # upper cutoff freq of bandpass filter
+        butter_order:           4       # butterworth filter order
         enable_CAR:             True
         output_filtered:        False   # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+        acausal_buffer_len:     112
+        causal_enable:          False
         input_stream:
             name:               thresh_ext_tester
             chan_per_stream:    96 # number of channels

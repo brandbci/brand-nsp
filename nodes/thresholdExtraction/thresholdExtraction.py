@@ -29,6 +29,10 @@ class ThresholdExtraction(BRANDNode):
         self.pack_per_call = self.parameters['pack_per_call']
         # whether to export the filtered data
         self.output_filtered = self.parameters['output_filtered']
+        # enable causal filtering
+        self.causal = self.parameters['causal_enable']
+        # length of the buffer used for acausal filtering
+        self.acausal_buffer_len = self.parameters['acausal_buffer_len']
 
         # parameters of the input stream
         self.input_params = self.parameters['input_stream']
@@ -39,7 +43,11 @@ class ThresholdExtraction(BRANDNode):
         self.n_channels = self.input_params['chan_per_stream']
 
         # build filtering pipeline
-        self.filter_func, self.sos, self.zi = self.build_filter()
+        if self.causal:
+            self.filter_func, self.sos, self.zi = self.build_filter()
+        else:
+            (self.filter_func, self.sos, self.zi, self.fir_win,
+             self.fir_zi) = self.build_filter()
 
         # calculate spike thresholds from the start of the data
         self.thresholds = self.calc_thresh(self.input_stream, self.thresh_mult,
@@ -62,32 +70,67 @@ class ThresholdExtraction(BRANDNode):
         but_high = self.parameters['butter_uppercut']
         # enable common average reference
         demean = self.parameters['enable_CAR']
+        # enable causal filtering
+        causal = self.causal
         # sampling rate of the input
         fs = self.parameters['input_stream']['samp_freq']
 
+        # determine filter type
+        if but_low and but_high:
+            filt_type = 'bandpass'
+            Wn = [but_low, but_high]
+        elif but_high:
+            filt_type = 'lowpass'
+            Wn = but_high
+        elif but_low:
+            filt_type = 'highpass'
+            Wn = but_low
+        else:
+            raise ValueError(
+                "Must specify 'butter_lowercut' or 'butter_uppercut'")
+
         # set up filter
         nyq = .5 * fs
-        sos = scipy.signal.butter(but_order, [but_low / nyq, but_high / nyq],
-                                  btype='bandpass',
+        sos = scipy.signal.butter(but_order,
+                                  Wn,
+                                  btype=filt_type,
                                   analog=False,
-                                  output='sos')  # set up a filter
+                                  output='sos',
+                                  fs=fs)  # set up a filter
         # initialize the state of the filter
         zi_flat = scipy.signal.sosfilt_zi(sos)
         # so that we have the right number of dimensions
         zi = np.zeros((zi_flat.shape[0], self.n_channels, zi_flat.shape[1]))
         # filter initialization
-        for ii in range(0, self.n_channels):
+        for ii in range(self.n_channels):
             zi[:, ii, :] = zi_flat
 
-        # select the filtering function
+        if not causal:
+            # FIR filter (backward)
+            N = self.acausal_buffer_len  # length of the buffer
+            imp = scipy.signal.unit_impulse(N)
+            fir_win = scipy.signal.sosfilt(sos, imp)
+            # filter initialization
+            fir_zi_flat = scipy.signal.lfilter_zi(fir_win, 1.0)
+            fir_zi = np.zeros((self.n_channels, fir_zi_flat.shape[0]))
+            for ii in range(self.n_channels):
+                fir_zi[ii, :] = fir_zi_flat
+
+        # log the filter info
+        causal_str = 'causal' if causal else 'acausal'
         message = (f'Loading {but_order :d} order, '
-                   f'[{but_low :d} {but_high :d}] hz bandpass causal filter')
+                   f'{Wn} hz {filt_type} {causal_str} filter')
         if demean:
             message += ' with CAR'
         logging.info(message)
-        filter_func = get_filter_func(demean)
 
-        return filter_func, sos, zi
+        # select the filtering function
+        filter_func = get_filter_func(demean, causal)
+
+        if causal:
+            return filter_func, sos, zi
+        else:
+            return filter_func, sos, zi, fir_win, fir_zi
 
     def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream,
                     n_channels, sos, zi):
@@ -115,7 +158,11 @@ class ThresholdExtraction(BRANDNode):
                 entry_data[b'timestamps'], np.uint32)
             i_start = i_end
 
-        self.filter_func(read_arr, filt_arr, sos, zi)
+        if self.causal:
+            self.filter_func(read_arr, filt_arr, sos, zi)
+        else:
+            filt_arr[:, :] = scipy.signal.sosfiltfilt(sos, read_arr, axis=1)
+
         thresholds = (thresh_mult *
                       np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
                           -1, 1)
@@ -124,6 +171,9 @@ class ThresholdExtraction(BRANDNode):
 
     def run(self):
         # get class variables
+        if not self.causal:
+            fir_win = self.fir_win
+            fir_zi = self.fir_zi
         input_stream = self.input_stream
         output_filtered = self.output_filtered
         pack_per_call = self.pack_per_call
@@ -137,8 +187,11 @@ class ThresholdExtraction(BRANDNode):
             (self.n_channels, samp_per_stream * pack_per_call),
             dtype=np.float32)
         filt_buffer = np.zeros_like(data_buffer)
+        fir_buffer = np.zeros((self.n_channels, self.acausal_buffer_len),
+                              dtype=np.float32)
         crossings = np.zeros_like(data_buffer)
         samp_times = np.zeros(samp_per_stream * pack_per_call, dtype=np.uint32)
+        samp_times_buffer = np.zeros(self.acausal_buffer_len, dtype=np.uint32)
 
         # initialize stream entries
         cross_dict = {}
@@ -171,15 +224,32 @@ class ThresholdExtraction(BRANDNode):
                     indStart = indEnd
 
                 # filter the data and find threshold times
-                self.filter_func(data_buffer, filt_buffer, sos, zi)
+                if self.causal:
+                    self.filter_func(data_buffer, filt_buffer, sos, zi)
+                else:
+                    self.filter_func(data_buffer,
+                                     filt_buffer,
+                                     fir_buffer,
+                                     sos=sos,
+                                     zi=zi,
+                                     fir_win=fir_win,
+                                     fir_zi=fir_zi)
+                    # update sample time buffer
+                    samp_times_buffer[:-indEnd] = samp_times_buffer[indEnd:]
+                    samp_times_buffer[-indEnd:] = samp_times
 
-                # is there a threshold crossing in the last ms
                 # find for each channel along the first dimension, keep dims,
                 # pack into a byte object and put into the thresh crossings
                 # dict
-                sync_dict['nsp_idx'] = int(samp_times[0])
+                if self.causal:
+                    samp_time_current = samp_times[0]
+                else:
+                    samp_time_current = samp_times_buffer[0]
+
+                sync_dict['nsp_idx'] = int(samp_time_current)
                 cross_dict[b'sync'] = json.dumps(sync_dict)
-                cross_dict[b'timestamps'] = samp_times[0].tobytes()
+                cross_dict[b'timestamps'] = samp_time_current.tobytes()
+                # is there a threshold crossing in the last ms?
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
                 cross_dict[b'crossings'] = np.any(crossings, axis=1).astype(
@@ -220,7 +290,7 @@ class ThresholdExtraction(BRANDNode):
 
 
 # Filtering functions
-def get_filter_func(demean):
+def get_filter_func(demean, causal=False):
     """
     Get a function for filtering the data
 
@@ -228,9 +298,11 @@ def get_filter_func(demean):
     ----------
     demean : bool
         Whether to apply a common average reference before filtering
+    causal : bool
+        Whether to use causal filtering or acausal filtering
     """
 
-    def filter_func(data, filt_data, sos, zi):
+    def causal_filter(data, filt_data, sos, zi):
         """
         causal filtering
 
@@ -251,6 +323,57 @@ def get_filter_func(demean):
                                                          data,
                                                          axis=1,
                                                          zi=zi)
+
+    def acausal_filter(data,
+                       filt_data,
+                       fir_buffer,
+                       sos,
+                       zi,
+                       fir_win=None,
+                       fir_zi=None):
+        """
+        acausal filtering
+
+        Parameters
+        ----------
+        data : array_like
+            An N-dimensional input array.
+        filt_data : ndarray
+            Array to store the output of the digital filter.
+        fir_buffer : ndarray
+            Array to store the output of the forward IIR filter.
+        sos : array_like
+            Array of second-order filter coefficients
+        zi : array_like
+            Initial conditions for the cascaded filter delays
+        fir_win : array-like
+            Coefficients of FIR filter
+        fir_zi : array-like
+            Steady-state conditions of the FIR filter
+        """
+        if demean:
+            data[:, :] = data - data.mean(axis=0, keepdims=True)
+
+        # shift the buffer
+        n_samples = data.shape[1]
+        fir_buffer[:, :-n_samples] = fir_buffer[:, n_samples:]
+
+        # run the forward pass filter
+        fir_buffer[:, -n_samples:], zi[:, :] = scipy.signal.sosfilt(sos,
+                                                                    data,
+                                                                    axis=1,
+                                                                    zi=zi)
+        # run the backward pass filter
+        # 1. pass in the reversed buffer
+        # 2. get the last N samples of the filter output
+        # 3. reverse the output when saving to filt_data
+        ic = fir_zi * filt_data[:, -1][:, None]
+        filt_data[:, ::-1] = scipy.signal.lfilter(fir_win,
+                                                  1.0,
+                                                  fir_buffer[:, ::-1],
+                                                  zi=ic)[0][:, -n_samples:]
+
+    filter_func = causal_filter if causal else acausal_filter
 
     return filter_func
 
