@@ -32,7 +32,7 @@ bin_width = 0.01  # ms
 for i, graph_df in enumerate(graph_dfs):
     graph_df = graph_df[graph_df.index != 0]
     latency = (graph_df['ts_tc'] - graph_df['ts_ca']) / 1e6
-    if i in [0, 1, 2]:
+    if i in [0, 1]:
         latency -= 4
     axes.hist(latency,
               bins=np.arange(0, latency.max() + bin_width, step=bin_width),
@@ -43,7 +43,7 @@ for i, graph_df in enumerate(graph_dfs):
 plt.legend()
 plt.tight_layout()
 run_str = '_'.join(run_ids)
-plt.savefig(os.path.join(fig_dir, f'{run_str}_latency_hist.png'))
+plt.savefig(os.path.join(fig_dir, f'{run_str}_latency_hist.pdf'))
 
 # %%
 fig, axes = plt.subplots(ncols=1,
@@ -54,7 +54,7 @@ fig, axes = plt.subplots(ncols=1,
 for i, graph_df in enumerate(graph_dfs):
     graph_df = graph_df[graph_df.index != 0]
     latency = (graph_df['ts_tc'] - graph_df['ts_ca']) / 1e6
-    if i in [0, 1, 2]:
+    if i in [0, 1]:
         latency -= 4
     filter_label = data_info[i][1]
     title = (f'{filter_label} latency: {latency.mean():.8f} +- '
