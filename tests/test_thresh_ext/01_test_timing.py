@@ -61,6 +61,8 @@ ca_df = pd.DataFrame(data)
 graph_df = tc_df.set_index('i_tc',
                            drop=False).join(ca_df.set_index('i_ca',
                                                             drop=False))
+# exclude zero index (which happens when the buffer is incomplete)
+graph_df = graph_df[graph_df.index != 0]
 
 # %%
 # analyze timing

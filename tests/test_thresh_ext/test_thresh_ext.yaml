@@ -19,8 +19,8 @@ nodes:
         butter_order:           4       # butterworth filter order
         enable_CAR:             True
         output_filtered:        False   # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
-        acausal_buffer_len:     112
-        causal_enable:          False
+        acausal_buffer_len:     150
+        acausal_filter:         FIR
         input_stream:
             name:               thresh_ext_tester
             chan_per_stream:    96 # number of channels

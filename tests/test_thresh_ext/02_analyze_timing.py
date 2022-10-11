@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # %%
-data_path = 'data/220920T1849_test_thresh_ext.pkl'
+data_path = 'data/221011T1620_test_thresh_ext.pkl'
 with open(data_path, 'rb') as f:
     graph_df = pickle.load(f)
 run_id = os.path.basename(data_path).split('_')[0]
@@ -17,10 +17,11 @@ os.makedirs(fig_dir, exist_ok=True)
 
 # %%
 # threshold extraction latency
+graph_df = graph_df[graph_df.index != 0]
 latency = (graph_df['ts_tc'] - graph_df['ts_ca']) / 1e6
 print(f'threshold extraction latency: {latency.mean()} +- {latency.std()}'
       f' ({latency.min()} - {latency.max()})')
-
+plt.plot(latency, '.')
 # %%
 # inter-sample interval
 print(f"threshold extraction ISI: {graph_df['ts_tc'].diff().mean() / 1e6}")

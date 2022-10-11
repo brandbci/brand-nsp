@@ -29,8 +29,9 @@ class ThresholdExtraction(BRANDNode):
         self.pack_per_call = self.parameters['pack_per_call']
         # whether to export the filtered data
         self.output_filtered = self.parameters['output_filtered']
-        # enable causal filtering
-        self.causal = self.parameters['causal_enable']
+        # enable acausal filtering
+        self.acausal_filter = self.parameters['acausal_filter']
+        self.causal = not self.acausal_filter
         # length of the buffer used for acausal filtering
         self.acausal_buffer_len = self.parameters['acausal_buffer_len']
 
@@ -46,8 +47,8 @@ class ThresholdExtraction(BRANDNode):
         if self.causal:
             self.filter_func, self.sos, self.zi = self.build_filter()
         else:
-            (self.filter_func, self.sos, self.zi, self.fir_win,
-             self.fir_zi) = self.build_filter()
+            (self.filter_func, self.sos, self.zi, self.rev_win,
+             self.rev_zi) = self.build_filter()
 
         # calculate spike thresholds from the start of the data
         self.thresholds = self.calc_thresh(self.input_stream, self.thresh_mult,
@@ -70,6 +71,8 @@ class ThresholdExtraction(BRANDNode):
         but_high = self.parameters['butter_uppercut']
         # enable common average reference
         demean = self.parameters['enable_CAR']
+        # whether to use an FIR filter on the reverse-pass
+        acausal_filter = self.acausal_filter
         # enable causal filtering
         causal = self.causal
         # sampling rate of the input
@@ -105,32 +108,37 @@ class ThresholdExtraction(BRANDNode):
         for ii in range(self.n_channels):
             zi[:, ii, :] = zi_flat
 
-        if not causal:
-            # FIR filter (backward)
-            N = self.acausal_buffer_len  # length of the buffer
-            imp = scipy.signal.unit_impulse(N)
-            fir_win = scipy.signal.sosfilt(sos, imp)
-            # filter initialization
-            fir_zi_flat = scipy.signal.lfilter_zi(fir_win, 1.0)
-            fir_zi = np.zeros((self.n_channels, fir_zi_flat.shape[0]))
-            for ii in range(self.n_channels):
-                fir_zi[ii, :] = fir_zi_flat
+        # select the filtering function
+        use_fir = True if acausal_filter.lower() == 'fir' else False
+        filter_func = get_filter_func(demean, causal, use_fir=use_fir)
 
         # log the filter info
         causal_str = 'causal' if causal else 'acausal'
         message = (f'Loading {but_order :d} order, '
-                   f'{Wn} hz {filt_type} {causal_str} filter')
-        if demean:
-            message += ' with CAR'
+                   f'{Wn} hz {filt_type} {causal_str}')
+        message += ' IIR-FIR filter' if use_fir else ' IIR-IIR filter'
+        message += ' with CAR' if demean else ''
         logging.info(message)
 
-        # select the filtering function
-        filter_func = get_filter_func(demean, causal)
+        if not causal:
+            if use_fir:
+                # FIR filter (backward)
+                N = self.acausal_buffer_len  # length of the buffer
+                imp = scipy.signal.unit_impulse(N)
+                rev_win = scipy.signal.sosfilt(sos, imp)
+                # filter initialization
+                rev_zi_flat = scipy.signal.lfilter_zi(rev_win, 1.0)
+                rev_zi = np.zeros((self.n_channels, rev_zi_flat.shape[0]))
+                for ii in range(self.n_channels):
+                    rev_zi[ii, :] = rev_zi_flat
+            else:
+                rev_win = None
+                rev_zi = zi.copy()
 
         if causal:
             return filter_func, sos, zi
         else:
-            return filter_func, sos, zi, fir_win, fir_zi
+            return filter_func, sos, zi, rev_win, rev_zi
 
     def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream,
                     n_channels, sos, zi):
@@ -172,8 +180,8 @@ class ThresholdExtraction(BRANDNode):
     def run(self):
         # get class variables
         if not self.causal:
-            fir_win = self.fir_win
-            fir_zi = self.fir_zi
+            rev_win = self.rev_win
+            rev_zi = self.rev_zi
         input_stream = self.input_stream
         output_filtered = self.output_filtered
         pack_per_call = self.pack_per_call
@@ -232,8 +240,8 @@ class ThresholdExtraction(BRANDNode):
                                      fir_buffer,
                                      sos=sos,
                                      zi=zi,
-                                     fir_win=fir_win,
-                                     fir_zi=fir_zi)
+                                     rev_win=rev_win,
+                                     rev_zi=rev_zi)
                     # update sample time buffer
                     samp_times_buffer[:-indEnd] = samp_times_buffer[indEnd:]
                     samp_times_buffer[-indEnd:] = samp_times
@@ -290,7 +298,7 @@ class ThresholdExtraction(BRANDNode):
 
 
 # Filtering functions
-def get_filter_func(demean, causal=False):
+def get_filter_func(demean, causal=False, use_fir=True):
     """
     Get a function for filtering the data
 
@@ -300,6 +308,8 @@ def get_filter_func(demean, causal=False):
         Whether to apply a common average reference before filtering
     causal : bool
         Whether to use causal filtering or acausal filtering
+    use_fir : bool
+        Whether to use an FIR filter for the reverse filter (when causal=False)
     """
 
     def causal_filter(data, filt_data, sos, zi):
@@ -329,8 +339,8 @@ def get_filter_func(demean, causal=False):
                        fir_buffer,
                        sos,
                        zi,
-                       fir_win=None,
-                       fir_zi=None):
+                       rev_win=None,
+                       rev_zi=None):
         """
         acausal filtering
 
@@ -346,9 +356,9 @@ def get_filter_func(demean, causal=False):
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
-        fir_win : array-like
+        rev_win : array-like
             Coefficients of FIR filter
-        fir_zi : array-like
+        rev_zi : array-like
             Steady-state conditions of the FIR filter
         """
         if demean:
@@ -367,11 +377,18 @@ def get_filter_func(demean, causal=False):
         # 1. pass in the reversed buffer
         # 2. get the last N samples of the filter output
         # 3. reverse the output when saving to filt_data
-        ic = fir_zi * filt_data[:, -1][:, None]
-        filt_data[:, ::-1] = scipy.signal.lfilter(fir_win,
-                                                  1.0,
-                                                  fir_buffer[:, ::-1],
-                                                  zi=ic)[0][:, -n_samples:]
+        if use_fir:
+            ic = rev_zi * filt_data[:, -1][:, None]
+            filt_data[:, ::-1] = scipy.signal.lfilter(rev_win,
+                                                      1.0,
+                                                      fir_buffer[:, ::-1],
+                                                      zi=ic)[0][:, -n_samples:]
+        else:
+            ic = rev_zi * filt_data[:, -1][None, :, None]
+            filt_data[:, ::-1] = scipy.signal.sosfilt(sos,
+                                                      fir_buffer[:, ::-1],
+                                                      axis=1,
+                                                      zi=ic)[0][:, -n_samples:]
 
     filter_func = causal_filter if causal else acausal_filter
 
