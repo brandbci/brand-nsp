@@ -109,14 +109,22 @@ class ThresholdExtraction(BRANDNode):
             zi[:, ii, :] = zi_flat
 
         # select the filtering function
-        use_fir = True if acausal_filter.lower() == 'fir' else False
+        if acausal_filter and acausal_filter.lower() == 'fir':
+            use_fir = True
+        else:
+            use_fir = False
         filter_func = get_filter_func(demean, causal, use_fir=use_fir)
 
         # log the filter info
         causal_str = 'causal' if causal else 'acausal'
         message = (f'Loading {but_order :d} order, '
                    f'{Wn} hz {filt_type} {causal_str}')
-        message += ' IIR-FIR filter' if use_fir else ' IIR-IIR filter'
+        if causal:
+            message += ' IIR filter'
+        elif use_fir:
+            message += ' IIR-FIR filter'
+        else:
+            message += ' IIR-IIR filter'
         message += ' with CAR' if demean else ''
         logging.info(message)
 
