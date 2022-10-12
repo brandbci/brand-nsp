@@ -7,9 +7,9 @@ import numpy as np
 
 # %%
 data_info = [
-    ['data/221011T1605_test_thresh_ext.pkl', 'acausal IIR-FIR'],
-    ['data/221011T1620_test_thresh_ext.pkl', 'acausal IIR-IIR'],
-    ['data/221011T1640_test_thresh_ext.pkl', 'causal IIR'],
+    ['data/221012T1518_test_thresh_ext.pkl', 'acausal IIR-FIR'],
+    ['data/221012T1525_test_thresh_ext.pkl', 'acausal IIR-IIR'],
+    ['data/221012T0936_test_thresh_ext.pkl', 'causal IIR'],
 ]
 graph_dfs = [None] * len(data_info)
 for i, (path, _) in enumerate(data_info):
@@ -40,10 +40,11 @@ for i, graph_df in enumerate(graph_dfs):
               label=data_info[i][1])
     axes.set_yscale('log')
     axes.set_xlabel('Latency (ms)')
+axes.set_xlim(0, 1)
 plt.legend()
 plt.tight_layout()
 run_str = '_'.join(run_ids)
-plt.savefig(os.path.join(fig_dir, f'{run_str}_latency_hist.pdf'))
+plt.savefig(os.path.join(fig_dir, f'{run_str}_latency_hist.png'), dpi=300)
 
 # %%
 fig, axes = plt.subplots(ncols=1,
@@ -71,5 +72,5 @@ for i, graph_df in enumerate(graph_dfs):
 
     plt.tight_layout()
 run_str = '_'.join(run_ids)
-plt.savefig(os.path.join(fig_dir, f'{run_str}_latency_scatter.png'))
+plt.savefig(os.path.join(fig_dir, f'{run_str}_latency_scatter.png'), dpi=300)
 # %%

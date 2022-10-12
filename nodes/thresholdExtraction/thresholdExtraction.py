@@ -33,7 +33,7 @@ class ThresholdExtraction(BRANDNode):
         self.acausal_filter = self.parameters['acausal_filter']
         self.causal = not self.acausal_filter
         # length of the buffer used for acausal filtering
-        self.acausal_buffer_len = self.parameters['acausal_buffer_len']
+        self.acausal_filter_lag = self.parameters['acausal_filter_lag']
 
         # parameters of the input stream
         self.input_params = self.parameters['input_stream']
@@ -131,7 +131,7 @@ class ThresholdExtraction(BRANDNode):
         if not causal:
             if use_fir:
                 # FIR filter (backward)
-                N = self.acausal_buffer_len  # length of the buffer
+                N = self.acausal_filter_lag + 1  # length of the filter
                 imp = scipy.signal.unit_impulse(N)
                 rev_win = scipy.signal.sosfilt(sos, imp)
                 # filter initialization
@@ -199,15 +199,15 @@ class ThresholdExtraction(BRANDNode):
         zi = self.zi
 
         # initialize arrays
-        data_buffer = np.zeros(
-            (self.n_channels, samp_per_stream * pack_per_call),
-            dtype=np.float32)
+        n_samp = samp_per_stream * pack_per_call
+        data_buffer = np.zeros((self.n_channels, n_samp), dtype=np.float32)
         filt_buffer = np.zeros_like(data_buffer)
-        fir_buffer = np.zeros((self.n_channels, self.acausal_buffer_len),
-                              dtype=np.float32)
+        rev_buffer = np.zeros(
+            (self.n_channels, self.acausal_filter_lag + n_samp),
+            dtype=np.float32)
         crossings = np.zeros_like(data_buffer)
-        samp_times = np.zeros(samp_per_stream * pack_per_call, dtype=np.uint32)
-        samp_times_buffer = np.zeros(self.acausal_buffer_len, dtype=np.uint32)
+        samp_times = np.zeros(n_samp, dtype=np.uint32)
+        samp_times_buffer = np.zeros(rev_buffer.shape[1], dtype=np.uint32)
 
         # initialize stream entries
         cross_dict = {}
@@ -245,14 +245,14 @@ class ThresholdExtraction(BRANDNode):
                 else:
                     self.filter_func(data_buffer,
                                      filt_buffer,
-                                     fir_buffer,
+                                     rev_buffer,
                                      sos=sos,
                                      zi=zi,
                                      rev_win=rev_win,
                                      rev_zi=rev_zi)
                     # update sample time buffer
-                    samp_times_buffer[:-indEnd] = samp_times_buffer[indEnd:]
-                    samp_times_buffer[-indEnd:] = samp_times
+                    samp_times_buffer[:-n_samp] = (samp_times_buffer[n_samp:])
+                    samp_times_buffer[-n_samp:] = samp_times
 
                 # find for each channel along the first dimension, keep dims,
                 # pack into a byte object and put into the thresh crossings
@@ -295,7 +295,7 @@ class ThresholdExtraction(BRANDNode):
 
                 # update key to be the entry number of last item in list
                 input_stream_dict[input_stream] = entry_id
-            else:
+            elif len(xread_receive) == 0:
                 logging.warning("No neural data has been received in the"
                                 f" last {timeout} ms")
 
@@ -344,7 +344,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
 
     def acausal_filter(data,
                        filt_data,
-                       fir_buffer,
+                       rev_buffer,
                        sos,
                        zi,
                        rev_win=None,
@@ -358,45 +358,43 @@ def get_filter_func(demean, causal=False, use_fir=True):
             An N-dimensional input array.
         filt_data : ndarray
             Array to store the output of the digital filter.
-        fir_buffer : ndarray
+        rev_buffer : ndarray
             Array to store the output of the forward IIR filter.
         sos : array_like
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
-        rev_win : array-like
-            Coefficients of FIR filter
-        rev_zi : array-like
-            Steady-state conditions of the FIR filter
+        rev_win : array-like, optional
+            Coefficients of the reverse FIR filter
+        rev_zi : array-like, optional
+            Steady-state conditions of the reverse filter
         """
         if demean:
             data[:, :] = data - data.mean(axis=0, keepdims=True)
 
         # shift the buffer
-        n_samples = data.shape[1]
-        fir_buffer[:, :-n_samples] = fir_buffer[:, n_samples:]
+        n_samp = data.shape[1]
+        rev_buffer[:, :-n_samp] = rev_buffer[:, n_samp:]
 
         # run the forward pass filter
-        fir_buffer[:, -n_samples:], zi[:, :] = scipy.signal.sosfilt(sos,
-                                                                    data,
-                                                                    axis=1,
-                                                                    zi=zi)
+        rev_buffer[:, -n_samp:], zi[:, :] = scipy.signal.sosfilt(sos,
+                                                                 data,
+                                                                 axis=1,
+                                                                 zi=zi)
         # run the backward pass filter
         # 1. pass in the reversed buffer
         # 2. get the last N samples of the filter output
         # 3. reverse the output when saving to filt_data
         if use_fir:
-            ic = rev_zi * filt_data[:, -1][:, None]
-            filt_data[:, ::-1] = scipy.signal.lfilter(rev_win,
-                                                      1.0,
-                                                      fir_buffer[:, ::-1],
-                                                      zi=ic)[0][:, -n_samples:]
+            for ii in range(filt_data.shape[0]):
+                filt_data[ii, ::-1] = np.convolve(rev_buffer[ii, ::-1],
+                                                  rev_win, 'valid')
         else:
             ic = rev_zi * filt_data[:, -1][None, :, None]
             filt_data[:, ::-1] = scipy.signal.sosfilt(sos,
-                                                      fir_buffer[:, ::-1],
+                                                      rev_buffer[:, ::-1],
                                                       axis=1,
-                                                      zi=ic)[0][:, -n_samples:]
+                                                      zi=ic)[0][:, -n_samp:]
 
     filter_func = causal_filter if causal else acausal_filter
 

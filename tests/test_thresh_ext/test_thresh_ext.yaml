@@ -19,11 +19,11 @@ nodes:
         butter_order:           4       # butterworth filter order
         enable_CAR:             True
         output_filtered:        False   # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
-        acausal_buffer_len:     150
+        acausal_filter_lag:     120
         acausal_filter:         FIR
         input_stream:
             name:               thresh_ext_tester
-            chan_per_stream:    96 # number of channels
+            chan_per_stream:    128 # number of channels
             samp_per_stream:    30 # number of samples per channel per redis entry
             samp_freq:          30000
   - name:         thresh_ext_tester
@@ -33,9 +33,9 @@ nodes:
     cpu_affinity:               4-5
     parameters:
         log: INFO
-        n_channels: 96
+        n_channels: 128
         seq_len: 30
         data_type: int16
-        duration: 305
+        duration: 35
         sample_rate: 1000
         stop_graph_when_done: True

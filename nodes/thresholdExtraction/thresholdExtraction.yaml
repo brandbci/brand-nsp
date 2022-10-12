@@ -11,7 +11,7 @@ nodes:
             butter_order:           2       # butterworth filter order
             enable_CAR:             True
             output_filtered:        False    # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
-            acausal_buffer_len:     112
+            acausal_filter_lag:     111      # Lag the data by this many samples when using an acausal filter
             acausal_filter:         False
             inputs_stream:
                 name:               continuousNeural
