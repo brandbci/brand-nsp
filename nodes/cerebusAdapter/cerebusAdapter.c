@@ -25,7 +25,7 @@ typedef struct cerebus_packet_header_t {
 // this allows for only a max streams based on constant above
 // change that constant if you want
 typedef struct graph_parameters_t {
-    char broadcast_ip;
+    char broadcast_ip[20];
     int broadcast_port;
     char broadcast_device[20];
     int num_streams;
@@ -349,7 +349,7 @@ int initialize_socket(char *broadcast_ip, int broadcast_port, char *broadcast_de
     addr.sin_port        = htons(broadcast_port);
 
      if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-        perror("[cerebusAdapter] socket binding failure\n"); 
+        perror("[cerebusAdapter] Socket binding failure"); 
         exit(EXIT_FAILURE); 
      }
 
