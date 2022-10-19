@@ -220,6 +220,8 @@ class ThresholdExtraction(BRANDNode):
         # set timeout
         timeout = 500
 
+        # name the filtered output stream
+        filt_stream = f'{self.NAME}Filt'
         while True:
             # wait to get data from cerebus stream, then parse it
             xread_receive = self.r.xread(input_stream_dict,
@@ -279,7 +281,7 @@ class ThresholdExtraction(BRANDNode):
                 cross_dict[b'BRANDS_time'] = time_now
 
                 # thresholdCrossings stream
-                p.xadd('thresholdCrossings', cross_dict)
+                p.xadd(self.NAME, cross_dict)
                 # filtered data stream
                 if output_filtered:
                     # if we're storing the filtered data
@@ -288,7 +290,7 @@ class ThresholdExtraction(BRANDNode):
                         np.int16).tobytes()
                     filt_dict[b'BRANDS_time'] = time_now
                     # add the filtered stuff to the pipeline
-                    p.xadd('filteredCerebusAdapter', filt_dict)
+                    p.xadd(filt_stream, filt_dict)
 
                 # write to Redis
                 p.execute()
