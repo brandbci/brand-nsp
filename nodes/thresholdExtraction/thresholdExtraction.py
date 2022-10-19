@@ -258,13 +258,13 @@ class ThresholdExtraction(BRANDNode):
                 # pack into a byte object and put into the thresh crossings
                 # dict
                 if self.causal:
-                    samp_time_current = samp_times[0]
+                    samp_time_current = samp_times[:n_samp]
                 else:
-                    samp_time_current = samp_times_buffer[0]
+                    samp_time_current = samp_times_buffer[:n_samp]
 
-                sync_dict['nsp_idx'] = int(samp_time_current)
+                sync_dict['nsp_idx'] = int(samp_time_current[0])
                 cross_dict[b'sync'] = json.dumps(sync_dict)
-                cross_dict[b'timestamps'] = samp_time_current.tobytes()
+                cross_dict[b'timestamps'] = samp_time_current[0].tobytes()
                 # is there a threshold crossing in the last ms?
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
@@ -283,7 +283,7 @@ class ThresholdExtraction(BRANDNode):
                 # filtered data stream
                 if output_filtered:
                     # if we're storing the filtered data
-                    filt_dict[b'timestamps'] = samp_times.tobytes()
+                    filt_dict[b'timestamps'] = samp_time_current.tobytes()
                     filt_dict[b'samples'] = filt_buffer.astype(
                         np.int16).tobytes()
                     filt_dict[b'BRANDS_time'] = time_now
