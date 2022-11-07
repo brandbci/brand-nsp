@@ -57,7 +57,7 @@ class ThresholdExtraction(BRANDNode):
                                            self.n_channels, self.sos, self.zi)
         # log thresholds to database
         thresolds_enc = self.thresholds.astype(np.int16).tobytes()
-        self.r.xadd('thresholds', {b'thresholds': thresolds_enc})
+        self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
 
         # terminate on SIGINT
         signal.signal(signal.SIGINT, self.terminate)
@@ -221,7 +221,7 @@ class ThresholdExtraction(BRANDNode):
         timeout = 500
 
         # name the filtered output stream
-        filt_stream = f'{self.NAME}Filt'
+        filt_stream = f'{self.NAME}_filt'
         while True:
             # wait to get data from cerebus stream, then parse it
             xread_receive = self.r.xread(input_stream_dict,
