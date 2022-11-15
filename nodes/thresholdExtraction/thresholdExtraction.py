@@ -43,6 +43,11 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.input_params['chan_per_stream']
 
+        # define timing and sync keys
+        self.sync_key = self.parameters['sync_key'].encode()
+        self.time_key = self.parameters['time_key'].encode()
+        self.sync_source_id = self.parameters['sync_source_id']
+
         # build filtering pipeline
         if self.causal:
             self.filter_func, self.sos, self.zi = self.build_filter()
@@ -212,7 +217,7 @@ class ThresholdExtraction(BRANDNode):
         # initialize stream entries
         cross_dict = {}
         filt_dict = {}
-        sync_dict = {'nsp_idx': int(samp_times[0])}
+        sync_dict = {self.sync_source_id: int(samp_times[0])}
 
         # initialize xread stream dictionary
         input_stream_dict = {input_stream: '$'}
@@ -264,8 +269,8 @@ class ThresholdExtraction(BRANDNode):
                 else:
                     samp_time_current = samp_times_buffer[:n_samp]
 
-                sync_dict['nsp_idx'] = int(samp_time_current[0])
-                cross_dict[b'sync'] = json.dumps(sync_dict)
+                sync_dict[self.sync_source_id] = int(samp_time_current[0])
+                cross_dict[self.sync_key] = json.dumps(sync_dict)
                 cross_dict[b'timestamps'] = samp_time_current[0].tobytes()
                 # is there a threshold crossing in the last ms?
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
@@ -278,17 +283,18 @@ class ThresholdExtraction(BRANDNode):
 
                 # log timestamps
                 time_now = np.uint64(time.monotonic_ns()).tobytes()
-                cross_dict[b'BRANDS_time'] = time_now
+                cross_dict[self.time_key] = time_now
 
                 # thresholdCrossings stream
                 p.xadd(self.NAME, cross_dict)
                 # filtered data stream
                 if output_filtered:
                     # if we're storing the filtered data
+                    filt_dict[self.sync_key] = json.dumps(sync_dict)
                     filt_dict[b'timestamps'] = samp_time_current.tobytes()
                     filt_dict[b'samples'] = filt_buffer.astype(
                         np.int16).tobytes()
-                    filt_dict[b'BRANDS_time'] = time_now
+                    filt_dict[self.time_key] = time_now
                     # add the filtered stuff to the pipeline
                     p.xadd(filt_stream, filt_dict)
 
