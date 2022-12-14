@@ -34,6 +34,8 @@ class ThresholdExtraction(BRANDNode):
         self.causal = not self.acausal_filter
         # length of the buffer used for acausal filtering
         self.acausal_filter_lag = self.parameters['acausal_filter_lag']
+        # whether to conduct common-average referencing
+        self.demean = self.parameters['enable_CAR']
 
         # parameters of the input stream
         self.input_stream = self.parameters['input_name']
@@ -42,10 +44,39 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # optional datatype
+        if 'input_data_type' in self.parameters:
+            self.dtype = self.parameters['input_data_type']
+        else:
+            self.dtype = np.int16
+
+        # list of lists of common average reference groupings
+        if self.demean and 'CAR_group_sizes' in self.parameters:
+            self.car_groups = []
+            ch_count = 0
+            for g in self.parameters['CAR_group_sizes']:
+                self.car_groups.append(np.arange(ch_count, ch_count+g).tolist())
+                ch_count += g
+        else:
+            self.car_groups = [np.arange(0, self.n_channels).tolist()]
+        
+        # exclude channels
+        if 'exclude_channels' in self.parameters:
+            exclude_ch = self.parameters['exclude_channels']
+            if not isinstance(exclude_ch, list):
+                exclude_ch = [exclude_ch]
+            for c in exclude_ch:
+                for g in self.car_groups:
+                    if c in g:
+                        g.remove(c)
+
         # define timing and sync keys
-        self.sync_key = self.parameters['sync_key'].encode()
-        self.time_key = self.parameters['time_key'].encode()
-        self.sync_source_id = self.parameters['sync_source_id']
+        if 'sync_key' in self.parameters:
+            self.sync_key = self.parameters['sync_key'].encode()
+        if 'time_key' in self.parameters:
+            self.time_key = self.parameters['time_key'].encode()
+        if 'sync_source_id' in self.parameters:
+            self.sync_source_id = self.parameters['sync_source_id']
 
         # build filtering pipeline
         if self.causal:
@@ -73,8 +104,6 @@ class ThresholdExtraction(BRANDNode):
         but_low = self.parameters['butter_lowercut']
         # upper cutoff frequency
         but_high = self.parameters['butter_uppercut']
-        # enable common average reference
-        demean = self.parameters['enable_CAR']
         # whether to use an FIR filter on the reverse-pass
         acausal_filter = self.acausal_filter
         # enable causal filtering
@@ -117,7 +146,7 @@ class ThresholdExtraction(BRANDNode):
             use_fir = True
         else:
             use_fir = False
-        filter_func = get_filter_func(demean, causal, use_fir=use_fir)
+        filter_func = get_filter_func(self.demean, causal, use_fir=use_fir)
 
         # log the filter info
         causal_str = 'causal' if causal else 'acausal'
@@ -129,7 +158,7 @@ class ThresholdExtraction(BRANDNode):
             message += ' IIR-FIR filter'
         else:
             message += ' IIR-IIR filter'
-        message += ' with CAR' if demean else ''
+        message += ' with CAR' if self.demean else ''
         logging.info(message)
 
         if not causal:
@@ -172,7 +201,7 @@ class ThresholdExtraction(BRANDNode):
         for _, entry_data in entries:  # put it all into an array
             i_end = i_start + samp_per_stream
             read_arr[:, i_start:i_end] = np.reshape(
-                np.frombuffer(entry_data[b'samples'], np.int16),
+                np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
                 (n_channels, samp_per_stream))
             read_times[i_start:i_end] = np.frombuffer(
                 entry_data[b'timestamps'], np.uint32)
@@ -241,7 +270,7 @@ class ThresholdExtraction(BRANDNode):
                 for entry_id, entry_data in xread_receive[0][1]:
                     indEnd = indStart + samp_per_stream
                     data_buffer[:, indStart:indEnd] = np.reshape(
-                        np.frombuffer(entry_data[b'samples'], np.int16),
+                        np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
                         (self.n_channels, samp_per_stream))
                     samp_times[indStart:indEnd] = np.frombuffer(
                         entry_data[b'timestamps'], np.uint32)
@@ -252,13 +281,14 @@ class ThresholdExtraction(BRANDNode):
 
                 # filter the data and find threshold times
                 if self.causal:
-                    self.filter_func(data_buffer, filt_buffer, sos, zi)
+                    self.filter_func(data_buffer, filt_buffer, sos, zi, self.car_groups)
                 else:
                     self.filter_func(data_buffer,
                                      filt_buffer,
                                      rev_buffer,
                                      sos=sos,
                                      zi=zi,
+                                     group_list=self.car_groups,
                                      rev_win=rev_win,
                                      rev_zi=rev_zi)
                     # update sample time buffer
@@ -334,7 +364,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
         Whether to use an FIR filter for the reverse filter (when causal=False)
     """
 
-    def causal_filter(data, filt_data, sos, zi):
+    def causal_filter(data, filt_data, sos, zi, group_list):
         """
         causal filtering
 
@@ -348,9 +378,12 @@ def get_filter_func(demean, causal=False, use_fir=True):
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
+        group_list : list
+            List of lists of channels grouped together across
+            which to compute a common average reference
         """
         if demean:
-            data[:, :] = data - data.mean(axis=0, keepdims=True)
+            common_average_reference(data, group_list)
         filt_data[:, :], zi[:, :] = scipy.signal.sosfilt(sos,
                                                          data,
                                                          axis=1,
@@ -361,6 +394,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
                        rev_buffer,
                        sos,
                        zi,
+                       group_list,
                        rev_win=None,
                        rev_zi=None):
         """
@@ -378,13 +412,16 @@ def get_filter_func(demean, causal=False, use_fir=True):
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
+        group_list : list
+            List of lists of channels grouped together across
+            which to compute a common average reference
         rev_win : array-like, optional
             Coefficients of the reverse FIR filter
         rev_zi : array-like, optional
             Steady-state conditions of the reverse filter
         """
         if demean:
-            data[:, :] = data - data.mean(axis=0, keepdims=True)
+            common_average_reference(data, group_list)
 
         # shift the buffer
         n_samp = data.shape[1]
@@ -413,6 +450,22 @@ def get_filter_func(demean, causal=False, use_fir=True):
     filter_func = causal_filter if causal else acausal_filter
 
     return filter_func
+
+def common_average_reference(data, group_list):
+    """
+    common average reference by group
+    
+    Parameters
+    ----------
+    data : array_like
+        An 2-dimensional input array with shape
+        [channel x time]
+    group_list : list
+        List of lists of channels grouped together across
+        which to compute a common average reference
+    """
+    for g in group_list:
+        data[g, :] -= data[g, :].mean(axis=0, keepdims=True)
 
 
 if __name__ == '__main__':
