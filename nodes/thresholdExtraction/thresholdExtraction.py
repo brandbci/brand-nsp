@@ -73,10 +73,16 @@ class ThresholdExtraction(BRANDNode):
         # define timing and sync keys
         if 'sync_key' in self.parameters:
             self.sync_key = self.parameters['sync_key'].encode()
+        else:
+            self.sync_key = b'sync'
         if 'time_key' in self.parameters:
             self.time_key = self.parameters['time_key'].encode()
+        else:
+            self.time_key = b'ts'
         if 'sync_source_id' in self.parameters:
             self.sync_source_id = self.parameters['sync_source_id']
+        else:
+            self.sync_source_id = 'i'
 
         # build filtering pipeline
         if self.causal:
