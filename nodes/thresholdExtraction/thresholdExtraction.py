@@ -36,12 +36,11 @@ class ThresholdExtraction(BRANDNode):
         self.acausal_filter_lag = self.parameters['acausal_filter_lag']
 
         # parameters of the input stream
-        self.input_params = self.parameters['input_stream']
-        self.input_stream = self.input_params['name']
+        self.input_stream = self.parameters['input_name']
         # number of samples per channel per redis entry
-        self.samp_per_stream = self.input_params['samp_per_stream']
+        self.samp_per_stream = self.parameters['input_samp_per_stream']
         # number of channels
-        self.n_channels = self.input_params['chan_per_stream']
+        self.n_channels = self.parameters['input_chan_per_stream']
 
         # define timing and sync keys
         self.sync_key = self.parameters['sync_key'].encode()
@@ -81,7 +80,7 @@ class ThresholdExtraction(BRANDNode):
         # enable causal filtering
         causal = self.causal
         # sampling rate of the input
-        fs = self.parameters['input_stream']['samp_freq']
+        fs = self.parameters['input_samp_freq']
 
         # determine filter type
         if but_low and but_high:

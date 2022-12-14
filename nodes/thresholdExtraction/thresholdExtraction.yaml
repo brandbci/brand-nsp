@@ -7,7 +7,7 @@ RedisStreams:
       enable_nwb:           True
       type_nwb:             SpikeTimes
       crossings:
-        chan_per_stream:    128
+        chan_per_stream:    $input_chan_per_stream
         samp_per_stream:    1
         sample_type:        int16
         nwb:
