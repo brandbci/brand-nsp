@@ -210,6 +210,8 @@ class ThresholdExtraction(BRANDNode):
         if self.causal:
             self.filter_func(read_arr, filt_arr, sos, zi)
         else:
+            if self.demean:
+                common_average_reference(read_arr, self.car_groups)
             filt_arr[:, :] = scipy.signal.sosfiltfilt(sos, read_arr, axis=1)
 
         thresholds = (thresh_mult *
