@@ -211,7 +211,9 @@ class ThresholdExtraction(BRANDNode):
             dtype=np.float32)
         crossings = np.zeros_like(data_buffer)
         samp_times = np.zeros(n_samp, dtype=np.uint32)
-        samp_times_buffer = np.zeros(rev_buffer.shape[1], dtype=np.uint32)
+        buffer_len = rev_buffer.shape[1]
+        samp_times_buffer = np.zeros(buffer_len, dtype=np.uint32)
+        buffer_fill = 0  # how many samples have been read into the buffer
 
         # initialize stream entries
         cross_dict = {}
@@ -245,6 +247,9 @@ class ThresholdExtraction(BRANDNode):
                         entry_data[b'timestamps'], np.uint32)
                     indStart = indEnd
 
+                # update key to be the entry number of last item in list
+                input_stream_dict[input_stream] = entry_id
+
                 # filter the data and find threshold times
                 if self.causal:
                     self.filter_func(data_buffer, filt_buffer, sos, zi)
@@ -267,6 +272,10 @@ class ThresholdExtraction(BRANDNode):
                     samp_time_current = samp_times[:n_samp]
                 else:
                     samp_time_current = samp_times_buffer[:n_samp]
+                    # check the buffer
+                    if buffer_fill + n_samp < buffer_len:  # buffer is not full
+                        buffer_fill += n_samp  # count the samples added
+                        continue  # skip writing to Redis
 
                 sync_dict[self.sync_source_id] = int(samp_time_current[0])
                 cross_dict[self.sync_key] = json.dumps(sync_dict)
@@ -300,8 +309,6 @@ class ThresholdExtraction(BRANDNode):
                 # write to Redis
                 p.execute()
 
-                # update key to be the entry number of last item in list
-                input_stream_dict[input_stream] = entry_id
             elif len(xread_receive) == 0:
                 logging.warning("No neural data has been received in the"
                                 f" last {timeout} ms")
