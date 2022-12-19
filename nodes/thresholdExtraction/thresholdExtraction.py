@@ -3,12 +3,14 @@
 # threshold_extraction.py
 # Kevin Bodkin, Yahia Ali
 
+from copy import deepcopy
 import gc
 import json
 import logging
 import signal
 import sys
 import time
+import yaml
 
 import numpy as np
 import scipy.signal
@@ -44,17 +46,46 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # thresholds file
+        if 'thresholds_file' in self.parameters:
+            self.thresholds_file = self.parameters['thresholds_file']
+            if self.thresholds_file is not None:
+                if 'thresholds_ch_range' in self.parameters:
+                    if len(self.parameters['thresholds_ch_range']) == 2:
+                        self.tf_chans = range(self.parameters['thresholds_ch_range'][0], self.parameters['thresholds_ch_range'][1])
+                    else:
+                        logging.warning('\'thresholds_ch_range\' parameter should be length 2, attempting to use all channels in the thresholds file')
+                        self.tf_chans = None
+                else:
+                    logging.warning('\'thresholds_ch_range\' was not provided, attempting to use all channels in the thresholds file')
+                    self.tf_chans = None
+        else:
+            self.thresholds_file = None
+
         # optional datatype
         if 'input_data_type' in self.parameters:
             self.dtype = self.parameters['input_data_type']
         else:
             self.dtype = np.int16
 
-        # list of lists of common average reference groupings
+        # list of lists of common-average reference groupings
         if self.demean and 'CAR_group_sizes' in self.parameters:
+            car_sizes = self.parameters['CAR_group_sizes']
+            if not isinstance(car_sizes, list):
+                if isinstance(car_sizes, int):
+                    car_sizes = []
+                    ch_count = deepcopy(self.n_channels)
+
+                    # get CAR group sizes of the specified size, until we run out of channels for the stream
+                    while ch_count > 0:
+                        car_sizes.append(min([self.parameters['CAR_group_sizes'], ch_count]))
+                        ch_count -= self.parameters['CAR_group_sizes']
+
             self.car_groups = []
             ch_count = 0
-            for g in self.parameters['CAR_group_sizes']:
+            for g in car_sizes:
+                if not isinstance(g, int):
+                    raise ValueError(f'\'CAR_group_sizes\' must be a list of \'int\'s or a single \'int\', but {self.parameters["CAR_group_sizes"]} was given')
                 self.car_groups.append(np.arange(ch_count, ch_count+g).tolist())
                 ch_count += g
         else:
@@ -64,7 +95,11 @@ class ThresholdExtraction(BRANDNode):
         if 'exclude_channels' in self.parameters:
             exclude_ch = self.parameters['exclude_channels']
             if not isinstance(exclude_ch, list):
-                exclude_ch = [exclude_ch]
+                if isinstance(exclude_ch, int):
+                    exclude_ch = [exclude_ch]
+            for c in exclude_ch:
+                if not isinstance(c, int):
+                    raise ValueError(f'\'exclude_channels\' must be a list of \'int\'s or a single \'int\', but {self.parameters["exclude_channels"]} was given. Exiting')
             for c in exclude_ch:
                 for g in self.car_groups:
                     if c in g:
@@ -91,11 +126,15 @@ class ThresholdExtraction(BRANDNode):
             (self.filter_func, self.sos, self.zi, self.rev_win,
              self.rev_zi) = self.build_filter()
 
-        # calculate spike thresholds from the start of the data
-        self.thresholds = self.calc_thresh(self.input_stream, self.thresh_mult,
-                                           self.thresh_calc_len,
-                                           self.samp_per_stream,
-                                           self.n_channels, self.sos, self.zi)
+        if self.thresholds_file is None:
+            # calculate spike thresholds from the start of the data
+            self.thresholds = self.calc_thresh( self.input_stream, self.thresh_mult,
+                                                self.thresh_calc_len,
+                                                self.samp_per_stream,
+                                                self.n_channels, self.sos, self.zi)
+        else:
+            self.thresholds = self.load_thresholds_from_file(self.thresholds_file, self.tf_chans)
+            
         # log thresholds to database
         thresolds_enc = self.thresholds.astype(np.int16).tobytes()
         self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
@@ -223,8 +262,31 @@ class ThresholdExtraction(BRANDNode):
         thresholds = (thresh_mult *
                       np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
                           -1, 1)
-        logging.info('Thresholds are set')
+        logging.info('Calculated and set thresholds')
         return thresholds
+
+    def load_thresholds_from_file(self, thresholds_file, tf_chans):
+        with open(thresholds_file, 'r') as f:
+            thresh_yaml = yaml.safe_load(f)
+        if 'thresholds' in thresh_yaml:
+            if tf_chans is None:
+                if len(thresh_yaml['thresholds']) == self.n_channels:
+                    logging.info('Loaded thresholds from file')
+                    return np.array(thresh_yaml['thresholds']).reshape(-1, 1)
+                else:
+                    raise ValueError(f'Number of thresholds in {thresholds_file} ({len(thresh_yaml["thresholds"])}) does not equal n_channels parameter {(self.n_channels)}')
+            # if all of our requested channels are in the available range of channels
+            elif (set(tf_chans) & set(range(0, len(thresh_yaml['thresholds'])))) == set(tf_chans):
+                logging.info('Loaded thresholds from file')
+                return np.array(thresh_yaml['thresholds'])[tf_chans].reshape(-1, 1)
+            else:
+                raise ValueError(f'Channel range {self.parameters["thresholds_ch_range"]} outside of available channels in {thresholds_file}')
+        else:
+            logging.warning(f'\'thresholds\' key not found in {thresholds_file}, calculating thresholds manually')
+            return self.calc_thresh(self.input_stream, self.thresh_mult,
+                                    self.thresh_calc_len,
+                                    self.samp_per_stream,
+                                    self.n_channels, self.sos, self.zi)
 
     def run(self):
         # get class variables
