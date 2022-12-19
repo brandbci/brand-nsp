@@ -1,0 +1,372 @@
+#! /usr/bin/env python
+"""
+Takes data from a dump.rdb and computes voltage thresholds,
+then stores the thresholds in a file
+"""
+
+from brand.redis import xread_count
+import json
+import logging
+import numbers
+import numpy as np
+import os
+from redis import ConnectionError, Redis
+import scipy.signal
+import signal
+import sys
+import yaml
+
+
+###############################################
+# Function definitions
+###############################################
+
+def common_average_reference(data, group_list):
+    """
+    common average reference by group
+    
+    Parameters
+    ----------
+    data : array_like
+        An 2-dimensional input array with shape
+        [channel x time]
+    group_list : list
+        List of lists of channels grouped together across
+        which to compute a common average reference
+    """
+    for g in group_list:
+        data[g, :] -= data[g, :].mean(axis=0, keepdims=True)
+
+
+###############################################
+# Initialize script
+###############################################
+
+NAME = 'thresholdCalculator'
+
+rdb_file = sys.argv[1]
+
+redis_host = sys.argv[2]
+redis_port = sys.argv[3]
+
+save_filename = os.path.splitext(rdb_file)[0]
+save_filepath = sys.argv[4]
+
+# set up logging
+loglevel = 'INFO'
+numeric_level = getattr(logging, loglevel.upper(), None)
+if not isinstance(numeric_level, int):
+    raise ValueError('Invalid log level: %s' % loglevel)
+logging.basicConfig(format=f'[{NAME}] %(levelname)s: %(message)s',
+                    level=numeric_level,
+                    stream=sys.stdout)
+
+
+###############################################
+## setting up clean exit code
+###############################################
+def signal_handler(sig, frame):  # setup the clean exit code with a warning
+    logging.info('SIGINT received. Exiting...')
+    sys.exit(0)
+
+# place the sigint signal handler
+signal.signal(signal.SIGINT, signal_handler)
+
+
+###############################################
+# Connect to redis and pull supergraph
+###############################################
+try:
+    logging.info(f"Connecting to Redis at {redis_host}:{redis_port}...")
+    r = Redis(redis_host, redis_port, retry_on_timeout=True)
+    r.ping()
+except ConnectionError as e:
+    logging.error(f"Error with Redis connection, check again: {e}")
+    sys.exit(1)
+except:
+    logging.error('Failed to connect to Redis. Exiting.')
+    sys.exit(1)
+
+logging.info('Redis connection successful.')
+
+try:
+    supergraph_entry = r.xrevrange(b'supergraph_stream', '+', '-', 1)[0]
+except IndexError as e:
+    logging.error(
+        f"No model published to supergraph_stream in Redis. Exiting.")
+    sys.exit(1)
+
+entry_id, entry_dict = supergraph_entry
+supergraph = json.loads(entry_dict[b'data'].decode())
+
+graph_params = supergraph['derivatives']['thresholdCalculator']['parameters']
+
+
+###############################################
+# Load parameters
+###############################################
+
+# which stream and key to pull data from
+if 'input_stream_name' not in graph_params or 'input_stream_key' not in graph_params:
+    logging.error(f'\'input_stream_name\' and \'input_stream_key\' parameters are required for {NAME} derivative, exiting')
+    sys.exit(1)
+
+if len(graph_params['input_stream_name']) != len(graph_params['input_stream_key']):
+    logging.error(f'There must be the same number of \'input_stream_name\'s as \'input_stream_key\'s for {NAME} derivative, exiting')
+    exit(1)
+
+if not isinstance(graph_params['input_stream_name'], list):
+    graph_params['input_stream_name'] = list(graph_params['input_stream_name'])
+
+if not isinstance(graph_params['input_stream_key'], list):
+    graph_params['input_stream_key'] = list(graph_params['input_stream_key'])
+
+stream_info = []
+for s, k in zip(graph_params['input_stream_name'], graph_params['input_stream_key']):
+    stream_info.append({'name': s,
+                        'key': k,
+                        'structure': supergraph['streams'][s][k]})
+
+# get info about amount of data in each stream
+ch_per_stream = []
+num_entries = []
+num_samples = []
+for s in stream_info:
+    ch_per_stream.append(s['structure']['chan_per_stream'])
+    num_entries.append(r.xlen(s['name']))
+    num_samples.append(num_entries[-1]*s['structure']['samp_per_stream'])
+
+# the RMS multiplier to use to calculate voltage thresholds
+if 'thresh_mult' in graph_params:
+    thresh_mult = graph_params['thresh_mult']
+    if not isinstance(thresh_mult, numbers.Number):
+        logging.error(f'\'thresh_mult\' must be of type \'numbers.Number\', but it was {thresh_mult}. Exiting')
+        sys.exit(1)
+else:
+    thresh_mult = -4.5
+
+# whether to filter the data in 'input_stream_name' before calculating thresholds
+if 'filter_first' in graph_params:
+    filter_first = graph_params['filter_first']
+    if not isinstance(filter_first, bool):
+        logging.error(f'\'filter_first\' must be of type \'bool\', but it was {filter_first}. Exiting')
+        sys.exit(1)
+else:
+    filter_first = True
+
+# whether to causally or acausally filter
+if 'causal' in graph_params:
+    causal = graph_params['causal']
+    if not isinstance(causal, bool):
+        logging.error(f'\'causal\' must be of type \'bool\', but it was {causal}. Exiting')
+        sys.exit(1)
+else:
+    causal = False
+
+# filter order
+if 'butter_order' in graph_params:
+    butter_order = graph_params['butter_order']
+    if not isinstance(butter_order, int):
+        logging.error(f'\'butter_order\' must be of type \'int\', but it was {butter_order}. Exiting')
+        sys.exit(1)
+else:
+    butter_order = 4
+
+# filter lower cutoff
+if 'butter_lowercut' in graph_params:
+    butter_lowercut = graph_params['butter_lowercut']
+    if not isinstance(butter_lowercut, numbers.Number):
+        logging.error(f'\'butter_lowercut\' must be of type \'numbers.Number\', but it was {butter_lowercut}. Exiting')
+        sys.exit(1)
+else:
+    butter_lowercut = 250
+
+# filter upper cutoff
+if 'butter_uppercut' in graph_params:
+    butter_uppercut = graph_params['butter_uppercut']
+    if not isinstance(butter_uppercut, numbers.Number):
+        logging.error(f'\'butter_uppercut\' must be of type \'numbers.Number\', but it was {butter_uppercut}. Exiting')
+        sys.exit(1)
+else:
+    butter_uppercut = 5000
+
+# sampling frequency
+if 'samp_freq' in graph_params:
+    samp_freq = graph_params['samp_freq']
+    if not isinstance(samp_freq, numbers.Number):
+        logging.error(f'\'samp_freq\' must be of type \'numbers.Number\', but it was {samp_freq}. Exiting')
+        sys.exit(1)
+else:
+    samp_freq = 30000
+
+# whether to common-average reference
+if 'enable_CAR' in graph_params:
+    demean = graph_params['enable_CAR']
+    if not isinstance(demean, bool):
+        logging.error(f'\'enable_CAR\' must be of type \'bool\', but it was {demean}. Exiting')
+        sys.exit(1)
+else:
+    demean = True
+
+# list of lists of common-average reference groupings
+if demean and 'CAR_group_sizes' in graph_params:
+    car_sizes = graph_params['CAR_group_sizes']
+    if not isinstance(car_sizes, list):
+        if isinstance(car_sizes, int):
+            car_sizes = []
+            # get CAR group sizes of the specified size, until we run out of channels for the stream
+            for s in stream_info:
+                ch_count = s['structure']['chan_per_stream']
+                while ch_count > 0:
+                    car_sizes.append(min([graph_params['CAR_group_sizes'], ch_count]))
+                    ch_count -= graph_params['CAR_group_sizes']
+    car_groups = []
+    ch_count = 0
+    for g in car_sizes:
+        if not isinstance(g, int):
+            logging.error(f'\'CAR_group_sizes\' must be a list of \'int\'s or a single \'int\', but {graph_params["CAR_group_sizes"]} was given. Exiting')
+            sys.exit(1)
+        car_groups.append(np.arange(ch_count, ch_count+g).tolist())
+        ch_count += g
+else:
+    car_groups = []
+    ch_count = 0
+    for c in ch_per_stream:
+        car_groups.append(np.arange(ch_count, ch_count+c).tolist())
+        ch_count += c
+        
+# exclude channels
+if 'exclude_channels' in graph_params:
+    exclude_ch = graph_params['exclude_channels']
+    if not isinstance(exclude_ch, list):
+        if isinstance(exclude_ch, int):
+            exclude_ch = [exclude_ch]
+    for c in exclude_ch:
+        if not isinstance(c, int):
+            logging.error(f'\'exclude_channels\' must be a list of \'int\'s or a single \'int\', but {graph_params["exclude_channels"]} was given. Exiting')
+            sys.exit(1)
+    for c in exclude_ch:
+        for g in car_groups:
+            if c in g:
+                g.remove(c)
+
+
+###############################################
+# Read in data
+###############################################
+
+# find how many entries to pull from each stream based on the minimum number of samples across streams
+n_samples = np.min(num_samples)
+for idx, s in enumerate(stream_info):
+    num_entries[idx] = int(np.ceil(n_samples/s['structure']['samp_per_stream']))
+
+if n_samples == 0:
+    logging.info(f'{num_samples} samples found in {graph_params["input_stream_name"]} streams, exiting')
+    sys.exit(0)
+
+# preallocate data array
+all_data = np.empty((np.sum(ch_per_stream), n_samples), dtype=np.float64)
+
+logging.info(f'Computing thresholds from {n_samples} samples')
+
+tot_ch = 0
+for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
+    this_ch = np.arange(tot_ch, tot_ch+n_ch)
+
+    reply = xread_count(r,
+                        stream=s['name'],
+                        startid='0',
+                        count=n_entries,
+                        block=0)
+
+    _, entries = reply[0]  # get the list of entries
+
+    i_start = 0
+    stream_data = np.empty((n_ch, s['structure']['samp_per_stream']*n_entries), s['structure']['sample_type'])
+    for _, entry_data in entries:  # put it all into an array
+        i_end = i_start + s['structure']['samp_per_stream']
+        stream_data[:, i_start:i_end] = np.reshape(
+            np.frombuffer(entry_data[s['key'].encode()], dtype=s['structure']['sample_type']),
+            (n_ch, s['structure']['samp_per_stream']))
+        i_start = i_end
+    all_data[this_ch, :] = np.float64(stream_data[:, :n_samples])
+    tot_ch += n_ch
+
+
+###############################################
+# Filter if requested
+###############################################
+
+if filter_first:
+    Wn = [butter_lowercut, butter_uppercut]
+    sos = scipy.signal.butter(  butter_order,
+                                Wn,
+                                btype='bandpass',
+                                analog=False,
+                                output='sos',
+                                fs=samp_freq) # set up a filter
+    # initialize the state of the filter
+    zi_flat = scipy.signal.sosfilt_zi(sos)
+    # so that we have the right number of dimensions
+    zi = np.zeros((zi_flat.shape[0], np.sum(ch_per_stream), zi_flat.shape[1]))
+    # filter initialization
+    for ii in range(np.sum(ch_per_stream)):
+        zi[:, ii, :] = zi_flat
+
+    # log the filter info
+    causal_str = 'causal' if causal else 'acausal'
+    message = (f'Using {butter_order :d} order, '
+                f'{Wn} hz bandpass {causal_str} filter')
+    message += ' with CAR' if demean else ''
+    logging.info(message)
+
+    if demean:
+        common_average_reference(all_data, car_groups)
+
+    if causal:
+        all_data = scipy.signal.sosfilt(sos,
+                                                         all_data,
+                                                         axis=1,
+                                                         zi=zi)
+    else:
+        all_data = scipy.signal.sosfiltfilt(sos, all_data, axis=1)
+
+
+###############################################
+# Compute thresholds
+###############################################
+
+thresholds = (thresh_mult *
+                np.sqrt(np.mean(np.square(all_data), axis=1))).reshape(
+                    -1, 1)
+
+
+###############################################
+# Save file
+###############################################
+
+output_dict = {
+    'stream_info': stream_info,
+    'thresh_mult': thresh_mult,
+    'filter_first': filter_first}
+if filter_first:
+    output_dict['causal'] = causal
+    output_dict['butter_order'] = butter_order
+    output_dict['butter_passband'] = Wn
+    output_dict['samp_freq'] = samp_freq
+    output_dict['enable_CAR'] = demean
+    if demean:
+        output_dict['car_groups'] = car_groups
+output_dict['thresholds'] = thresholds.reshape(-1).tolist()
+
+save_filename = save_filename + '.yaml'
+save_filepath = os.path.join(save_filepath, 'thresholds')
+if not os.path.exists(save_filepath):
+    os.makedirs(save_filepath)
+
+save_path = os.path.join(save_filepath, save_filename)
+
+# save the file
+logging.info(f'Saving thresholds file to {save_path}')
+with open(save_path, 'w') as f:
+    yaml.dump(output_dict, f, sort_keys=False, default_flow_style=None)
