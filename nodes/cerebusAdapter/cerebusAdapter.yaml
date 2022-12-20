@@ -1,0 +1,13 @@
+RedisStreams:
+  Inputs:
+  Outputs:
+    ContinuousNeural:
+      enable_nwb:         False
+      type_nwb:           TimeSeries
+      samples:
+        chan_per_stream:  $chan_per_stream
+        samp_per_stream:  $samp_per_stream
+        sample_type:      int16
+        nwb:
+          unit:           0.25uV
+          description:    Raw broadband data from Cerebus

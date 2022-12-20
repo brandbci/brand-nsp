@@ -3,12 +3,14 @@
 # threshold_extraction.py
 # Kevin Bodkin, Yahia Ali
 
+from copy import deepcopy
 import gc
 import json
 import logging
 import signal
 import sys
 import time
+import yaml
 
 import numpy as np
 import scipy.signal
@@ -34,6 +36,8 @@ class ThresholdExtraction(BRANDNode):
         self.causal = not self.acausal_filter
         # length of the buffer used for acausal filtering
         self.acausal_filter_lag = self.parameters['acausal_filter_lag']
+        # whether to conduct common-average referencing
+        self.demean = self.parameters['enable_CAR']
 
         # parameters of the input stream
         self.input_stream = self.parameters['input_name']
@@ -42,10 +46,86 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # thresholds stream
+        if 'thresholds_stream' in self.parameters:
+            self.thresholds_stream = self.parameters['thresholds_stream']
+        else:
+            self.thresholds_stream = None
+
+        # thresholds file
+        if 'thresholds_file' in self.parameters:
+            self.thresholds_file = self.parameters['thresholds_file']
+        else:
+            self.thresholds_file = None
+
+        # which thresholds to use
+        if self.thresholds_stream is not None or self.thresholds_file is not None:
+            if 'thresholds_ch_range' in self.parameters:
+                if len(self.parameters['thresholds_ch_range']) == 2:
+                    self.th_chans = range(self.parameters['thresholds_ch_range'][0], self.parameters['thresholds_ch_range'][1])
+                else:
+                    logging.warning('\'thresholds_ch_range\' parameter should be length 2, attempting to use all channels in the thresholds stream or file')
+                    self.th_chans = None
+            else:
+                logging.warning('\'thresholds_ch_range\' was not provided, attempting to use all channels in the thresholds stream or file')
+                self.th_chans = None
+
+        # optional datatype
+        if 'input_data_type' in self.parameters:
+            self.dtype = self.parameters['input_data_type']
+        else:
+            self.dtype = np.int16
+
+        # list of lists of common-average reference groupings
+        if self.demean and 'CAR_group_sizes' in self.parameters:
+            car_sizes = self.parameters['CAR_group_sizes']
+            if not isinstance(car_sizes, list):
+                if isinstance(car_sizes, int):
+                    car_sizes = []
+                    ch_count = deepcopy(self.n_channels)
+
+                    # get CAR group sizes of the specified size, until we run out of channels for the stream
+                    while ch_count > 0:
+                        car_sizes.append(min([self.parameters['CAR_group_sizes'], ch_count]))
+                        ch_count -= self.parameters['CAR_group_sizes']
+
+            self.car_groups = []
+            ch_count = 0
+            for g in car_sizes:
+                if not isinstance(g, int):
+                    raise ValueError(f'\'CAR_group_sizes\' must be a list of \'int\'s or a single \'int\', but {self.parameters["CAR_group_sizes"]} was given')
+                self.car_groups.append(np.arange(ch_count, ch_count+g).tolist())
+                ch_count += g
+        else:
+            self.car_groups = [np.arange(0, self.n_channels).tolist()]
+        
+        # exclude channels
+        if 'exclude_channels' in self.parameters:
+            exclude_ch = self.parameters['exclude_channels']
+            if not isinstance(exclude_ch, list):
+                if isinstance(exclude_ch, int):
+                    exclude_ch = [exclude_ch]
+            for c in exclude_ch:
+                if not isinstance(c, int):
+                    raise ValueError(f'\'exclude_channels\' must be a list of \'int\'s or a single \'int\', but {self.parameters["exclude_channels"]} was given. Exiting')
+            for c in exclude_ch:
+                for g in self.car_groups:
+                    if c in g:
+                        g.remove(c)
+
         # define timing and sync keys
-        self.sync_key = self.parameters['sync_key'].encode()
-        self.time_key = self.parameters['time_key'].encode()
-        self.sync_source_id = self.parameters['sync_source_id']
+        if 'sync_key' in self.parameters:
+            self.sync_key = self.parameters['sync_key'].encode()
+        else:
+            self.sync_key = b'sync'
+        if 'time_key' in self.parameters:
+            self.time_key = self.parameters['time_key'].encode()
+        else:
+            self.time_key = b'ts'
+        if 'sync_source_id' in self.parameters:
+            self.sync_source_id = self.parameters['sync_source_id']
+        else:
+            self.sync_source_id = 'i'
 
         # build filtering pipeline
         if self.causal:
@@ -54,14 +134,19 @@ class ThresholdExtraction(BRANDNode):
             (self.filter_func, self.sos, self.zi, self.rev_win,
              self.rev_zi) = self.build_filter()
 
-        # calculate spike thresholds from the start of the data
-        self.thresholds = self.calc_thresh(self.input_stream, self.thresh_mult,
-                                           self.thresh_calc_len,
-                                           self.samp_per_stream,
-                                           self.n_channels, self.sos, self.zi)
-        # log thresholds to database
-        thresolds_enc = self.thresholds.astype(np.int16).tobytes()
-        self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
+        # load or compute thresholds
+        self.thresholds = None
+        if self.thresholds_stream is not None:
+            self.thresholds = self.load_thresholds_from_stream(self.thresholds_stream, self.th_chans)
+        
+        if self.thresholds is None and self.thresholds_file is not None:
+            self.thresholds = self.load_thresholds_from_file(self.thresholds_file, self.th_chans)
+        
+        if self.thresholds is None:
+            self.thresholds = self.calc_thresh( self.input_stream, self.thresh_mult,
+                                                self.thresh_calc_len,
+                                                self.samp_per_stream,
+                                                self.n_channels, self.sos, self.zi)
 
         # terminate on SIGINT
         signal.signal(signal.SIGINT, self.terminate)
@@ -73,8 +158,6 @@ class ThresholdExtraction(BRANDNode):
         but_low = self.parameters['butter_lowercut']
         # upper cutoff frequency
         but_high = self.parameters['butter_uppercut']
-        # enable common average reference
-        demean = self.parameters['enable_CAR']
         # whether to use an FIR filter on the reverse-pass
         acausal_filter = self.acausal_filter
         # enable causal filtering
@@ -117,7 +200,7 @@ class ThresholdExtraction(BRANDNode):
             use_fir = True
         else:
             use_fir = False
-        filter_func = get_filter_func(demean, causal, use_fir=use_fir)
+        filter_func = get_filter_func(self.demean, causal, use_fir=use_fir)
 
         # log the filter info
         causal_str = 'causal' if causal else 'acausal'
@@ -129,7 +212,7 @@ class ThresholdExtraction(BRANDNode):
             message += ' IIR-FIR filter'
         else:
             message += ' IIR-IIR filter'
-        message += ' with CAR' if demean else ''
+        message += ' with CAR' if self.demean else ''
         logging.info(message)
 
         if not causal:
@@ -172,7 +255,7 @@ class ThresholdExtraction(BRANDNode):
         for _, entry_data in entries:  # put it all into an array
             i_end = i_start + samp_per_stream
             read_arr[:, i_start:i_end] = np.reshape(
-                np.frombuffer(entry_data[b'samples'], np.int16),
+                np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
                 (n_channels, samp_per_stream))
             read_times[i_start:i_end] = np.frombuffer(
                 entry_data[b'timestamps'], np.uint32)
@@ -181,13 +264,65 @@ class ThresholdExtraction(BRANDNode):
         if self.causal:
             self.filter_func(read_arr, filt_arr, sos, zi)
         else:
+            if self.demean:
+                common_average_reference(read_arr, self.car_groups)
             filt_arr[:, :] = scipy.signal.sosfiltfilt(sos, read_arr, axis=1)
 
         thresholds = (thresh_mult *
                       np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
                           -1, 1)
-        logging.info('Thresholds are set')
+            
+        # log thresholds to database
+        thresolds_enc = thresholds.astype(np.int16).tobytes()
+        self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
+
+        logging.info('Calculated and set thresholds')
         return thresholds
+
+    def load_thresholds_from_file(self, thresholds_file, tf_chans):
+        try:
+            with open(thresholds_file, 'r') as f:
+                thresh_yaml = yaml.safe_load(f)
+            if 'thresholds' in thresh_yaml:
+                if tf_chans is None:
+                    if len(thresh_yaml['thresholds']) == self.n_channels:
+                        logging.info(f'Loaded thresholds from {thresholds_file}')
+                        return np.array(thresh_yaml['thresholds']).reshape(-1, 1)
+                    else:
+                        raise ValueError(f'Number of thresholds in {thresholds_file} ({len(thresh_yaml["thresholds"])}) does not equal n_channels parameter {(self.n_channels)}')
+                # if all of our requested channels are in the available range of channels
+                elif (set(tf_chans) & set(range(0, len(thresh_yaml['thresholds'])))) == set(tf_chans):
+                    logging.info(f'Loaded thresholds from {thresholds_file}')
+                    return np.array(thresh_yaml['thresholds'])[tf_chans].reshape(-1, 1)
+                else:
+                    raise ValueError(f'Channel range {self.parameters["thresholds_ch_range"]} outside of available channels in {thresholds_file} (max {len(thresh_yaml["thresholds"])})')
+            else:
+                logging.warning(f'Could not find \'thresholds\' key in {thresholds_file}')
+                return None
+
+        except FileNotFoundError:
+            logging.warning(f'Could not find thresholds file at {thresholds_file}')
+            return None
+
+    def load_thresholds_from_stream(self, stream, th_chans):
+        entry = self.r.xrevrange(stream, '+', '-', count=1)
+        if entry:
+            thresholds = np.frombuffer(entry[0][1][b'thresholds'], dtype=np.float64)
+            if th_chans is None:
+                if len(thresholds) == self.n_channels:
+                    logging.info(f'Loaded thresholds from the {stream} stream')
+                    return thresholds.reshape(-1, 1)
+                else:
+                    raise ValueError(f'Number of thresholds in the {stream} stream ({len(thresholds)}) does not equal n_channels parameter {(self.n_channels)}')
+            # if all of our requested channels are in the available range of channels
+            elif (set(th_chans) & set(range(0, len(thresholds)))) == set(th_chans):
+                logging.info(f'Loaded thresholds from the {stream} stream')
+                return thresholds[th_chans].reshape(-1, 1)
+            else:
+                raise ValueError(f'Channel range {self.parameters["thresholds_ch_range"]} outside of available channels in {stream} stream (max {len(thresholds)})')
+        else:
+            logging.warning(f'{stream} stream has no entries')
+            return None
 
     def run(self):
         # get class variables
@@ -241,7 +376,7 @@ class ThresholdExtraction(BRANDNode):
                 for entry_id, entry_data in xread_receive[0][1]:
                     indEnd = indStart + samp_per_stream
                     data_buffer[:, indStart:indEnd] = np.reshape(
-                        np.frombuffer(entry_data[b'samples'], np.int16),
+                        np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
                         (self.n_channels, samp_per_stream))
                     samp_times[indStart:indEnd] = np.frombuffer(
                         entry_data[b'timestamps'], np.uint32)
@@ -252,13 +387,14 @@ class ThresholdExtraction(BRANDNode):
 
                 # filter the data and find threshold times
                 if self.causal:
-                    self.filter_func(data_buffer, filt_buffer, sos, zi)
+                    self.filter_func(data_buffer, filt_buffer, sos, zi, self.car_groups)
                 else:
                     self.filter_func(data_buffer,
                                      filt_buffer,
                                      rev_buffer,
                                      sos=sos,
                                      zi=zi,
+                                     group_list=self.car_groups,
                                      rev_win=rev_win,
                                      rev_zi=rev_zi)
                     # update sample time buffer
@@ -334,7 +470,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
         Whether to use an FIR filter for the reverse filter (when causal=False)
     """
 
-    def causal_filter(data, filt_data, sos, zi):
+    def causal_filter(data, filt_data, sos, zi, group_list):
         """
         causal filtering
 
@@ -348,9 +484,12 @@ def get_filter_func(demean, causal=False, use_fir=True):
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
+        group_list : list
+            List of lists of channels grouped together across
+            which to compute a common average reference
         """
         if demean:
-            data[:, :] = data - data.mean(axis=0, keepdims=True)
+            common_average_reference(data, group_list)
         filt_data[:, :], zi[:, :] = scipy.signal.sosfilt(sos,
                                                          data,
                                                          axis=1,
@@ -361,6 +500,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
                        rev_buffer,
                        sos,
                        zi,
+                       group_list,
                        rev_win=None,
                        rev_zi=None):
         """
@@ -378,13 +518,16 @@ def get_filter_func(demean, causal=False, use_fir=True):
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
+        group_list : list
+            List of lists of channels grouped together across
+            which to compute a common average reference
         rev_win : array-like, optional
             Coefficients of the reverse FIR filter
         rev_zi : array-like, optional
             Steady-state conditions of the reverse filter
         """
         if demean:
-            data[:, :] = data - data.mean(axis=0, keepdims=True)
+            common_average_reference(data, group_list)
 
         # shift the buffer
         n_samp = data.shape[1]
@@ -413,6 +556,22 @@ def get_filter_func(demean, causal=False, use_fir=True):
     filter_func = causal_filter if causal else acausal_filter
 
     return filter_func
+
+def common_average_reference(data, group_list):
+    """
+    common average reference by group
+    
+    Parameters
+    ----------
+    data : array_like
+        An 2-dimensional input array with shape
+        [channel x time]
+    group_list : list
+        List of lists of channels grouped together across
+        which to compute a common average reference
+    """
+    for g in group_list:
+        data[g, :] -= data[g, :].mean(axis=0, keepdims=True)
 
 
 if __name__ == '__main__':

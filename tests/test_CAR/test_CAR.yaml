@@ -1,0 +1,76 @@
+metadata:
+    participant_id: t0
+
+parameters:
+    sync: &sync sync
+    time: &time ts
+
+nodes:
+    -   name:         func_generator #.bin
+        nickname:     func_generator
+        module:       ../brand-modules/brand-test
+        redis_inputs:                 []
+        redis_outputs:                
+            func_generator: func_generator
+        run_priority:                 99
+        parameters:
+            sample_rate:            30000
+            n_features:             128
+            n_targets:              2
+            spike_rate_hz:          50
+            frequency_hz:           300
+            amplitude:              1000
+            samp_per_stream:        30
+            log:                    INFO 
+
+    -   name:         thresholdExtraction
+        nickname:     test_node
+        module:       ../brand-modules/brand-nsp
+        redis_outputs:
+            test_node: thresh_cross
+            test_node_filt: filtered
+        run_priority:               99
+        cpu_affinity:               6-9
+        parameters:
+            log:                    INFO
+            sync_key:               *sync
+            time_key:               *time
+            sync_source_id:         i
+            pack_per_call:          1       # number of redis packets to pull per loop
+            thresh_mult:            -4.25   # threshold Values
+            thresh_calc_len:        2000    # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+            butter_lowercut:        250     # lower cutoff freq of bandpass filter
+            butter_uppercut:        ~    # upper cutoff freq of bandpass filter
+            butter_order:           4       # butterworth filter order
+            enable_CAR:             True
+            CAR_group_sizes:        [64, 64]
+            exclude_channels:       [4]
+            output_filtered:        True   # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+            acausal_filter_lag:     120
+            acausal_filter:         FIR
+            input_name:             func_generator
+            input_chan_per_stream:  128 # number of channels
+            input_samp_per_stream:  30 # number of samples per channel per redis entry
+            input_samp_freq:        30000
+            input_data_type:        int16
+
+derivatives:
+  - exportNWB:
+        parameters:
+            participant_file:       ../Data/t0/t0.yaml
+            devices_file:           ../Data/devices.yaml
+            description:            Testing CAR
+            sync_key:               *sync
+            time_key:               *time
+            sync_timing_hz:
+                i: 30000
+            streams:
+                func_generator:
+                    enable:             True
+                    sync:               i
+                test_node_filt:
+                    enable:             True
+                    sync:               i
+                test_node:
+                    enable:             True
+                    sync:               i
