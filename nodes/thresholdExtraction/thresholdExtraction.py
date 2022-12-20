@@ -25,8 +25,6 @@ class ThresholdExtraction(BRANDNode):
 
         # threshold multiplier, usually around -5
         self.thresh_mult = self.parameters['thresh_mult']
-        # amount of data to use for threshold calculation
-        self.thresh_calc_len = self.parameters['thresh_calc_len']
         # number of Redis packets to read on each iteration
         self.pack_per_call = self.parameters['pack_per_call']
         # whether to export the filtered data
@@ -143,6 +141,8 @@ class ThresholdExtraction(BRANDNode):
             self.thresholds = self.load_thresholds_from_file(self.thresholds_file, self.th_chans)
         
         if self.thresholds is None:
+            # amount of data to use for threshold calculation
+            self.thresh_calc_len = self.parameters['thresh_calc_len']
             self.thresholds = self.calc_thresh( self.input_stream, self.thresh_mult,
                                                 self.thresh_calc_len,
                                                 self.samp_per_stream,
