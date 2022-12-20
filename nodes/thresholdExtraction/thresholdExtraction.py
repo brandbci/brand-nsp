@@ -46,21 +46,29 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # thresholds stream
+        if 'thresholds_stream' in self.parameters:
+            self.thresholds_stream = self.parameters['thresholds_stream']
+        else:
+            self.thresholds_stream = None
+
         # thresholds file
         if 'thresholds_file' in self.parameters:
             self.thresholds_file = self.parameters['thresholds_file']
-            if self.thresholds_file is not None:
-                if 'thresholds_ch_range' in self.parameters:
-                    if len(self.parameters['thresholds_ch_range']) == 2:
-                        self.tf_chans = range(self.parameters['thresholds_ch_range'][0], self.parameters['thresholds_ch_range'][1])
-                    else:
-                        logging.warning('\'thresholds_ch_range\' parameter should be length 2, attempting to use all channels in the thresholds file')
-                        self.tf_chans = None
-                else:
-                    logging.warning('\'thresholds_ch_range\' was not provided, attempting to use all channels in the thresholds file')
-                    self.tf_chans = None
         else:
             self.thresholds_file = None
+
+        # which thresholds to use
+        if self.thresholds_stream is not None or self.thresholds_file is not None:
+            if 'thresholds_ch_range' in self.parameters:
+                if len(self.parameters['thresholds_ch_range']) == 2:
+                    self.th_chans = range(self.parameters['thresholds_ch_range'][0], self.parameters['thresholds_ch_range'][1])
+                else:
+                    logging.warning('\'thresholds_ch_range\' parameter should be length 2, attempting to use all channels in the thresholds stream or file')
+                    self.th_chans = None
+            else:
+                logging.warning('\'thresholds_ch_range\' was not provided, attempting to use all channels in the thresholds stream or file')
+                self.th_chans = None
 
         # optional datatype
         if 'input_data_type' in self.parameters:
@@ -126,18 +134,19 @@ class ThresholdExtraction(BRANDNode):
             (self.filter_func, self.sos, self.zi, self.rev_win,
              self.rev_zi) = self.build_filter()
 
-        if self.thresholds_file is None:
-            # calculate spike thresholds from the start of the data
+        # load or compute thresholds
+        self.thresholds = None
+        if self.thresholds_stream is not None:
+            self.thresholds = self.load_thresholds_from_stream(self.thresholds_stream, self.th_chans)
+        
+        if self.thresholds is None and self.thresholds_file is not None:
+            self.thresholds = self.load_thresholds_from_file(self.thresholds_file, self.th_chans)
+        
+        if self.thresholds is None:
             self.thresholds = self.calc_thresh( self.input_stream, self.thresh_mult,
                                                 self.thresh_calc_len,
                                                 self.samp_per_stream,
                                                 self.n_channels, self.sos, self.zi)
-        else:
-            self.thresholds = self.load_thresholds_from_file(self.thresholds_file, self.tf_chans)
-            
-        # log thresholds to database
-        thresolds_enc = self.thresholds.astype(np.int16).tobytes()
-        self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
 
         # terminate on SIGINT
         signal.signal(signal.SIGINT, self.terminate)
@@ -262,31 +271,58 @@ class ThresholdExtraction(BRANDNode):
         thresholds = (thresh_mult *
                       np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
                           -1, 1)
+            
+        # log thresholds to database
+        thresolds_enc = thresholds.astype(np.int16).tobytes()
+        self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
+
         logging.info('Calculated and set thresholds')
         return thresholds
 
     def load_thresholds_from_file(self, thresholds_file, tf_chans):
-        with open(thresholds_file, 'r') as f:
-            thresh_yaml = yaml.safe_load(f)
-        if 'thresholds' in thresh_yaml:
-            if tf_chans is None:
-                if len(thresh_yaml['thresholds']) == self.n_channels:
-                    logging.info('Loaded thresholds from file')
-                    return np.array(thresh_yaml['thresholds']).reshape(-1, 1)
+        try:
+            with open(thresholds_file, 'r') as f:
+                thresh_yaml = yaml.safe_load(f)
+            if 'thresholds' in thresh_yaml:
+                if tf_chans is None:
+                    if len(thresh_yaml['thresholds']) == self.n_channels:
+                        logging.info(f'Loaded thresholds from {thresholds_file}')
+                        return np.array(thresh_yaml['thresholds']).reshape(-1, 1)
+                    else:
+                        raise ValueError(f'Number of thresholds in {thresholds_file} ({len(thresh_yaml["thresholds"])}) does not equal n_channels parameter {(self.n_channels)}')
+                # if all of our requested channels are in the available range of channels
+                elif (set(tf_chans) & set(range(0, len(thresh_yaml['thresholds'])))) == set(tf_chans):
+                    logging.info(f'Loaded thresholds from {thresholds_file}')
+                    return np.array(thresh_yaml['thresholds'])[tf_chans].reshape(-1, 1)
                 else:
-                    raise ValueError(f'Number of thresholds in {thresholds_file} ({len(thresh_yaml["thresholds"])}) does not equal n_channels parameter {(self.n_channels)}')
-            # if all of our requested channels are in the available range of channels
-            elif (set(tf_chans) & set(range(0, len(thresh_yaml['thresholds'])))) == set(tf_chans):
-                logging.info('Loaded thresholds from file')
-                return np.array(thresh_yaml['thresholds'])[tf_chans].reshape(-1, 1)
+                    raise ValueError(f'Channel range {self.parameters["thresholds_ch_range"]} outside of available channels in {thresholds_file} (max {len(thresh_yaml["thresholds"])})')
             else:
-                raise ValueError(f'Channel range {self.parameters["thresholds_ch_range"]} outside of available channels in {thresholds_file}')
+                logging.warning(f'Could not find \'thresholds\' key in {thresholds_file}')
+                return None
+
+        except FileNotFoundError:
+            logging.warning(f'Could not find thresholds file at {thresholds_file}')
+            return None
+
+    def load_thresholds_from_stream(self, stream, th_chans):
+        entry = self.r.xrevrange(stream, '+', '-', count=1)
+        if entry:
+            thresholds = np.frombuffer(entry[0][1][b'thresholds'], dtype=np.float64)
+            if th_chans is None:
+                if len(thresholds) == self.n_channels:
+                    logging.info(f'Loaded thresholds from the {stream} stream')
+                    return thresholds.reshape(-1, 1)
+                else:
+                    raise ValueError(f'Number of thresholds in the {stream} stream ({len(thresholds)}) does not equal n_channels parameter {(self.n_channels)}')
+            # if all of our requested channels are in the available range of channels
+            elif (set(th_chans) & set(range(0, len(thresholds)))) == set(th_chans):
+                logging.info(f'Loaded thresholds from the {stream} stream')
+                return thresholds[th_chans].reshape(-1, 1)
+            else:
+                raise ValueError(f'Channel range {self.parameters["thresholds_ch_range"]} outside of available channels in {stream} stream (max {len(thresholds)})')
         else:
-            logging.warning(f'\'thresholds\' key not found in {thresholds_file}, calculating thresholds manually')
-            return self.calc_thresh(self.input_stream, self.thresh_mult,
-                                    self.thresh_calc_len,
-                                    self.samp_per_stream,
-                                    self.n_channels, self.sos, self.zi)
+            logging.warning(f'{stream} stream has no entries')
+            return None
 
     def run(self):
         # get class variables

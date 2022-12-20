@@ -342,8 +342,10 @@ thresholds = (thresh_mult *
 
 
 ###############################################
-# Save file
+# Save file & write to Redis
 ###############################################
+
+r.xadd('thresholds', {'thresholds':thresholds.tobytes()})
 
 output_dict = {
     'stream_info': stream_info,
