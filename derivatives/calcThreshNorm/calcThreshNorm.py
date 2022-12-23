@@ -1,7 +1,8 @@
 #! /usr/bin/env python
 """
-Takes data from a dump.rdb and computes voltage thresholds,
-then stores the thresholds in a file
+Takes data from a dump.rdb and computes voltage thresholds
+and spike rate normalization parameters,
+then stores both in a file and Redis
 """
 
 from brand.redis import xread_count
@@ -42,7 +43,7 @@ def common_average_reference(data, group_list):
 # Initialize script
 ###############################################
 
-NAME = 'thresholdCalculator'
+NAME = 'calcThreshNorm'
 
 rdb_file = sys.argv[1]
 
@@ -108,11 +109,11 @@ graph_params = supergraph['derivatives']['thresholdCalculator']['parameters']
 
 # which stream and key to pull data from
 if 'input_stream_name' not in graph_params or 'input_stream_key' not in graph_params:
-    logging.error(f'\'input_stream_name\' and \'input_stream_key\' parameters are required for {NAME} derivative, exiting')
+    logging.error(f'\'input_stream_name\' and \'input_stream_key\' parameters are required, exiting')
     sys.exit(1)
 
 if len(graph_params['input_stream_name']) != len(graph_params['input_stream_key']):
-    logging.error(f'There must be the same number of \'input_stream_name\'s as \'input_stream_key\'s for {NAME} derivative, exiting')
+    logging.error(f'There must be the same number of \'input_stream_name\'s as \'input_stream_key\'s, exiting')
     exit(1)
 
 if not isinstance(graph_params['input_stream_name'], list):
@@ -193,8 +194,8 @@ else:
 # sampling frequency
 if 'samp_freq' in graph_params:
     samp_freq = graph_params['samp_freq']
-    if not isinstance(samp_freq, numbers.Number):
-        logging.error(f'\'samp_freq\' must be of type \'numbers.Number\', but it was {samp_freq}. Exiting')
+    if not isinstance(samp_freq, numbers.Number) or samp_freq < 1e3:
+        logging.error(f'\'samp_freq\' must be of type \'numbers.Number\' and at least 1000 Hz, but it was {samp_freq}. Exiting')
         sys.exit(1)
 else:
     samp_freq = 30000
@@ -249,6 +250,15 @@ if 'exclude_channels' in graph_params:
         for g in car_groups:
             if c in g:
                 g.remove(c)
+
+# binning size
+if 'bin_size' in graph_params:
+    bin_size = graph_params['bin_size']
+    if not isinstance(bin_size, int) or bin_size < 1:
+        logging.error(f'\'bin_size\' must be of type \'int\' and at least 1 ms, but it was {bin_size}. Exiting')
+        sys.exit(1)
+else:
+    bin_size = 10 # ms
 
 
 ###############################################
@@ -342,10 +352,37 @@ thresholds = (thresh_mult *
 
 
 ###############################################
+# Compute normalization parameters
+###############################################
+
+crossings = (all_data[:, :-1] > thresholds & all_data[:, 1:] <= thresholds)
+
+def bin_data(data, bin_width):
+    n_samples, n_chans = data.shape
+    # samples that fit evenly into a bin
+    b_samples = bin_width * (n_samples // bin_width)
+    # bin the data
+    binned_data = data[:b_samples, :].reshape(-1, bin_width,
+                                              n_chans).sum(axis=1)
+    return binned_data
+
+# accumulate in 1 ms bins, then in bin_size ms bins
+binned = bin_data(all_data.T, int(samp_freq/1e3)) > 0
+binned = bin_data(binned, bin_size)
+
+# calculate means and STDs
+means = binned.mean(axis=0)
+stds = binned.std(axis=0)
+
+
+###############################################
 # Save file & write to Redis
 ###############################################
 
-r.xadd('thresholds', {'thresholds':thresholds.tobytes()})
+r.xadd('thresh_norm', {
+    'thresholds': thresholds.tobytes(),
+    'means': means.tobytes(),
+    'stds': stds.tobytes()})
 
 output_dict = {
     'stream_info': stream_info,
@@ -359,16 +396,19 @@ if filter_first:
     output_dict['enable_CAR'] = demean
     if demean:
         output_dict['car_groups'] = car_groups
+    output_dict['bin_size'] = bin_size
 output_dict['thresholds'] = thresholds.reshape(-1).tolist()
+output_dict['means'] = means.tolist()
+output_dict['stds'] = stds.tolist()
 
 save_filename = save_filename + '.yaml'
-save_filepath = os.path.join(save_filepath, 'thresholds')
+save_filepath = os.path.join(save_filepath, 'thresh_norm')
 if not os.path.exists(save_filepath):
     os.makedirs(save_filepath)
 
 save_path = os.path.join(save_filepath, save_filename)
 
 # save the file
-logging.info(f'Saving thresholds file to {save_path}')
+logging.info(f'Saving thresh_norm file to {save_path}')
 with open(save_path, 'w') as f:
     yaml.dump(output_dict, f, sort_keys=False, default_flow_style=None)
