@@ -100,7 +100,7 @@ except IndexError as e:
 entry_id, entry_dict = supergraph_entry
 supergraph = json.loads(entry_dict[b'data'].decode())
 
-graph_params = supergraph['derivatives']['thresholdCalculator']['parameters']
+graph_params = supergraph['derivatives'][NAME]['parameters']
 
 
 ###############################################
@@ -355,7 +355,7 @@ thresholds = (thresh_mult *
 # Compute normalization parameters
 ###############################################
 
-crossings = (all_data[:, :-1] > thresholds & all_data[:, 1:] <= thresholds)
+crossings = ((all_data[:, :-1] > thresholds) & (all_data[:, 1:] <= thresholds))
 
 def bin_data(data, bin_width):
     n_samples, n_chans = data.shape
