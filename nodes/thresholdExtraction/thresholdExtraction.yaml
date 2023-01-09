@@ -18,7 +18,7 @@ RedisStreams:
       samples:
         chan_per_stream:    $input_samp_per_stream
         samp_per_stream:    $input_chan_per_stream
-        sample_type:        $input_data_type
+        sample_type:        int16
         nwb:
           unit:             0.25uV
           description:      Filtered broadband data
