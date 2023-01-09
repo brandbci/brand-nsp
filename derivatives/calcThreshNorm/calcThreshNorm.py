@@ -367,7 +367,7 @@ def bin_data(data, bin_width):
     return binned_data
 
 # accumulate in 1 ms bins, then in bin_size ms bins
-binned = bin_data(all_data.T, int(samp_freq/1e3)) > 0
+binned = bin_data(crossings.T, int(samp_freq/1e3)) > 0
 binned = bin_data(binned, bin_size)
 
 # calculate means and STDs
