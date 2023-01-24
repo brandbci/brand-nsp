@@ -234,19 +234,25 @@ int main (int argc_main, char **argv_main) {
                     // This gets the current system time
                     clock_gettime(CLOCK_MONOTONIC, &current_time);
                     
-                    // Copy the timestamp information into argvPtr
-                    memcpy( &argvPtr[iStream][ind_cerebus_timestamps + 1][n[iStream] * sizeof(uint32_t)],      &cerebus_packet_header->time,  sizeof(uint32_t));
-                    memcpy( &argvPtr[iStream][ind_current_time + 1][n[iStream] * sizeof(struct timeval)],      &current_time,                 sizeof(struct timeval));
-                    memcpy( &argvPtr[iStream][ind_udp_received_time + 1][n[iStream] * sizeof(struct timeval)], &udp_received_time,            sizeof(struct timeval));
-    
-                    // The index where the data starts in the UDP payload
-                    int cb_data_ind  = cb_packet_ind + sizeof(cerebus_packet_header_t);
-    
-                    // Copy each payload entry directly to the argvPtr. dlen contains the number of 4 bytes of payload
-                    for(int iChan = 0; iChan < cerebus_packet_header->dlen * 2; iChan++) {
-                        memcpy(&(argvPtr[iStream][ind_samples + 1][(n[iStream] + iChan*graph_parameters.samp_per_stream[iStream]) * sizeof(int16_t)]), &udp_packet_payload[cb_data_ind + 2*iChan], sizeof(int16_t));
+                    uint32_t cb_time = cerebus_packet_header->time;
+                    if (n[iStream] == 0 && cb_time % graph_parameters.samp_per_stream[iStream] != 0) {
+                        // skip this cerebus packet
+                        int cb_data_ind = cb_packet_ind + sizeof(cerebus_packet_header_t);
+                    } else {
+                        // Copy the timestamp information into argvPtr
+                        memcpy( &argvPtr[iStream][ind_cerebus_timestamps + 1][n[iStream] * sizeof(uint32_t)],      &cerebus_packet_header->time,  sizeof(uint32_t));
+                        memcpy( &argvPtr[iStream][ind_current_time + 1][n[iStream] * sizeof(struct timeval)],      &current_time,                 sizeof(struct timeval));
+                        memcpy( &argvPtr[iStream][ind_udp_received_time + 1][n[iStream] * sizeof(struct timeval)], &udp_received_time,            sizeof(struct timeval));
+        
+                        // The index where the data starts in the UDP payload
+                        int cb_data_ind  = cb_packet_ind + sizeof(cerebus_packet_header_t);
+        
+                        // Copy each payload entry directly to the argvPtr. dlen contains the number of 4 bytes of payload
+                        for(int iChan = 0; iChan < cerebus_packet_header->dlen * 2; iChan++) {
+                            memcpy(&(argvPtr[iStream][ind_samples + 1][(n[iStream] + iChan*graph_parameters.samp_per_stream[iStream]) * sizeof(int16_t)]), &udp_packet_payload[cb_data_ind + 2*iChan], sizeof(int16_t));
+                        }
+                        n[iStream]++;
                     }
-                    n[iStream]++;
                 }
                 if (n[iStream] == graph_parameters.samp_per_stream[iStream]) {
 
