@@ -308,13 +308,23 @@ for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
 ###############################################
 
 if filter_first:
-    Wn = [butter_lowercut, butter_uppercut]
+    if butter_lowercut and butter_uppercut:
+        filt_type = 'bandpass'
+        Wn = [butter_lowercut, butter_uppercut]
+    elif butter_uppercut:
+        filt_type = 'lowpass'
+        Wn = butter_uppercut
+    elif butter_lowercut:
+        filt_type = 'highpass'
+        Wn = butter_lowercut
+
     sos = scipy.signal.butter(  butter_order,
                                 Wn,
-                                btype='bandpass',
+                                btype=filt_type,
                                 analog=False,
                                 output='sos',
                                 fs=samp_freq) # set up a filter
+
     # initialize the state of the filter
     zi_flat = scipy.signal.sosfilt_zi(sos)
     # so that we have the right number of dimensions
