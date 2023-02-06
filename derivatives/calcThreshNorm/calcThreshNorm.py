@@ -150,7 +150,7 @@ if 'ch_mask_stream' in graph_params:
     ch_mask_entry = r.xrevrange(graph_params['ch_mask_stream'], '+', '-', count=1)
     ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
 else:
-    ch_mask = np.arange(np.sum(ch_per_stream))
+    ch_mask = np.arange(np.sum(ch_per_stream), dtype=np.uint16)
 
 # whether to filter the data in 'input_stream_name' before calculating thresholds
 if 'filter_first' in graph_params:

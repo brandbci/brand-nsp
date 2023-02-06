@@ -44,6 +44,13 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # stream containing the list of channels to use
+        if 'ch_mask_stream' in self.parameters:
+            ch_mask_entry = self.r.xrevrange(self.parameters['ch_mask_stream'], '+', '-', count=1)
+            self.ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
+        else:
+            self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
+
         # thresholds stream
         if 'thresholds_stream' in self.parameters:
             self.thresholds_stream = self.parameters['thresholds_stream']
@@ -129,6 +136,10 @@ class ThresholdExtraction(BRANDNode):
                 for g in self.car_groups:
                     if c in g:
                         g.remove(c)
+
+        # keep only masked channels
+        for g_idx in range(len(self.car_groups)):
+            self.car_groups[g_idx] = list(set(self.car_groups[g_idx]).intersection(set(self.ch_mask)))
 
         # define timing and sync keys
         if 'sync_key' in self.parameters:
