@@ -148,7 +148,11 @@ else:
 
 if 'ch_mask_stream' in graph_params:
     ch_mask_entry = r.xrevrange(graph_params['ch_mask_stream'], '+', '-', count=1)
-    ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
+    if ch_mask_entry:
+        ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
+    else:
+        logging.warning(f'\'ch_mask_stream\' was set to {graph_params["ch_mask_stream"]}, but there were no entries. Defaulting to using all channels')
+        ch_mask = np.arange(np.sum(ch_per_stream), dtype=np.uint16)
 else:
     ch_mask = np.arange(np.sum(ch_per_stream), dtype=np.uint16)
 

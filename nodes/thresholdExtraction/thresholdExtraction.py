@@ -47,7 +47,11 @@ class ThresholdExtraction(BRANDNode):
         # stream containing the list of channels to use
         if 'ch_mask_stream' in self.parameters:
             ch_mask_entry = self.r.xrevrange(self.parameters['ch_mask_stream'], '+', '-', count=1)
-            self.ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
+            if ch_mask_entry:
+                self.ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
+            else:
+                logging.warning(f'\'ch_mask_stream\' was set to {self.parameters["ch_mask_stream"]}, but there were no entries. Defaulting to using all channels')
+                self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
         else:
             self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
 
