@@ -44,17 +44,6 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
-        # stream containing the list of channels to use
-        if 'ch_mask_stream' in self.parameters:
-            ch_mask_entry = self.r.xrevrange(self.parameters['ch_mask_stream'], '+', '-', count=1)
-            if ch_mask_entry:
-                self.ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
-            else:
-                logging.warning(f'\'ch_mask_stream\' was set to {self.parameters["ch_mask_stream"]}, but there were no entries. Defaulting to using all channels')
-                self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
-        else:
-            self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
-
         # thresholds stream
         if 'thresholds_stream' in self.parameters:
             self.thresholds_stream = self.parameters['thresholds_stream']
@@ -140,6 +129,22 @@ class ThresholdExtraction(BRANDNode):
                 for g in self.car_groups:
                     if c in g:
                         g.remove(c)
+
+        # stream containing the list of channels to use
+        if 'ch_mask_stream' in self.parameters:
+            ch_mask_entry = self.r.xrevrange(self.parameters['ch_mask_stream'], '+', '-', count=1)
+            if ch_mask_entry:
+                self.ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
+                if self.th_chans is None:
+                    logging.warning(f'\'ch_mask_stream\' was provided but \'thresholds_ch_range\' was not, so the incorrect channels may be masked')
+                else:
+                    self.ch_mask = np.array(list(set(self.ch_mask).intersection(set(self.th_chans))))
+                    self.ch_mask -= self.th_chans[0]
+            else:
+                logging.warning(f'\'ch_mask_stream\' was set to {self.parameters["ch_mask_stream"]}, but there were no entries. Defaulting to using all channels')
+                self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
+        else:
+            self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
 
         # keep only masked channels
         for g_idx in range(len(self.car_groups)):
