@@ -10,8 +10,10 @@ nodes:
     redis_inputs:
     redis_outputs:                [continuousNeural]
     parameters:                   
+      broadcast_ip:           192.168.137.255
       broadcast_port:         51002
-      num_streams:            3
+      broadcast_device:       enp3s0f1
+      num_streams:            1
       stream_names:           [continuousNeural]
       samp_freq:              [30000]
       packet_type:            [6]

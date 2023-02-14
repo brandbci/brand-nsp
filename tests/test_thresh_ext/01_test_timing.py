@@ -51,16 +51,20 @@ for i, (entry_id, entry_data) in enumerate(replies):
 tc_df = pd.DataFrame(data)
 
 replies = r.xrange('thresh_ext_tester')
-data = [None] * len(replies)
+data = {'i_ca': [], 'ts_ca': []}
 for i, (entry_id, entry_data) in enumerate(replies):
-    index = np.frombuffer(entry_data[b'timestamps'], dtype=np.uint32)[0]
-    timestamp = np.frombuffer(entry_data[b't'], dtype=np.uint64)[0]
-    data[i] = {'i_ca': index, 'ts_ca': timestamp}
+    index = np.frombuffer(entry_data[b'timestamps'], dtype=np.uint32)
+    data['i_ca'] += index.tolist()
+    timestamps = np.zeros_like(index) + np.frombuffer(entry_data[b't'],
+                                                      dtype=np.uint64)
+    data['ts_ca'] += timestamps.tolist()
 ca_df = pd.DataFrame(data)
 
 graph_df = tc_df.set_index('i_tc',
                            drop=False).join(ca_df.set_index('i_ca',
                                                             drop=False))
+# exclude zero index (which happens when the buffer is incomplete)
+graph_df = graph_df[graph_df.index != 0]
 
 # %%
 # analyze timing
@@ -82,6 +86,7 @@ date_str = datetime.now().strftime(r'%y%m%dT%H%M')
 filepath = os.path.join(data_dir, f'{date_str}_test_thresh_ext.pkl')
 with open(filepath, 'wb') as f:
     pickle.dump(graph_df, f)
+    pickle.dump(graph, f)
 print(f'data saved to {filepath}')
 
 # %%
