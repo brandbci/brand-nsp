@@ -146,6 +146,16 @@ if 'thresh_mult' in graph_params:
 else:
     thresh_mult = -4.5
 
+if 'ch_mask_stream' in graph_params:
+    ch_mask_entry = r.xrevrange(graph_params['ch_mask_stream'], '+', '-', count=1)
+    if ch_mask_entry:
+        ch_mask = np.frombuffer(ch_mask_entry[0][1][b'channels'], dtype=np.uint16)
+    else:
+        logging.warning(f'\'ch_mask_stream\' was set to {graph_params["ch_mask_stream"]}, but there were no entries. Defaulting to using all channels')
+        ch_mask = np.arange(np.sum(ch_per_stream), dtype=np.uint16)
+else:
+    ch_mask = np.arange(np.sum(ch_per_stream), dtype=np.uint16)
+
 # whether to filter the data in 'input_stream_name' before calculating thresholds
 if 'filter_first' in graph_params:
     filter_first = graph_params['filter_first']
@@ -260,6 +270,9 @@ if 'bin_size' in graph_params:
 else:
     bin_size = 10 # ms
 
+# keep only masked channels
+for g_idx in range(len(car_groups)):
+    car_groups[g_idx] = list(set(car_groups[g_idx]).intersection(set(ch_mask)))
 
 ###############################################
 # Read in data
