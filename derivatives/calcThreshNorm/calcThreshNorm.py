@@ -187,7 +187,7 @@ else:
 if 'butter_lowercut' in graph_params:
     butter_lowercut = graph_params['butter_lowercut']
     if not isinstance(butter_lowercut, numbers.Number) and butter_lowercut is not None:
-        logging.error(f'\'butter_lowercut\' must be of type \'numbers.Number\', but it was {butter_lowercut}. Exiting')
+        logging.error(f'\'butter_lowercut\' must be of type \'numbers.Number\' or \'None\', but it was {butter_lowercut}. Exiting')
         sys.exit(1)
 else:
     butter_lowercut = None
@@ -196,7 +196,7 @@ else:
 if 'butter_uppercut' in graph_params:
     butter_uppercut = graph_params['butter_uppercut']
     if not isinstance(butter_uppercut, numbers.Number) and butter_uppercut is not None:
-        logging.error(f'\'butter_uppercut\' must be of type \'numbers.Number\', but it was {butter_uppercut}. Exiting')
+        logging.error(f'\'butter_uppercut\' must be of type \'numbers.Number\' or \'None\', but it was {butter_uppercut}. Exiting')
         sys.exit(1)
 else:
     butter_uppercut = None
