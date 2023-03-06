@@ -44,6 +44,9 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # whether to remove coincident spikes
+        self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else self.n_channels+1
+
         # thresholds stream
         if 'thresholds_stream' in self.parameters:
             self.thresholds_stream = self.parameters['thresholds_stream']
@@ -484,8 +487,14 @@ class ThresholdExtraction(BRANDNode):
                 # is there a threshold crossing in the last ms?
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
-                cross_dict[b'crossings'] = np.any(crossings, axis=1).astype(
-                    np.int16).tobytes()
+                cross_now = np.any(crossings, axis=1).astype(np.int16)
+
+                # coincident spike removal
+                tot_spikes = cross_now.sum()
+                if tot_spikes >= self.num_coincident:
+                    cross_now[:] = 0
+                    
+                cross_dict[b'crossings'] = cross_now.tobytes()
 
                 # Redis
                 p = self.r.pipeline()  # create a new pipeline
