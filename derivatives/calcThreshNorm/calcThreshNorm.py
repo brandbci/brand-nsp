@@ -352,7 +352,7 @@ if filter_first:
     # log the filter info
     causal_str = 'causal' if causal else 'acausal'
     message = (f'Using {butter_order :d} order, '
-                f'{Wn} hz bandpass {causal_str} filter')
+                f'{Wn} hz {filt_type} {causal_str} filter')
     message += ' with CAR' if demean else ''
     logging.info(message)
 
