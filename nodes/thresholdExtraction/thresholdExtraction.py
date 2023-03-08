@@ -151,19 +151,19 @@ class ThresholdExtraction(BRANDNode):
             self.car_groups[g_idx] = list(set(self.car_groups[g_idx]).intersection(set(self.ch_mask)))
 
         # initialize adaptive threholding
-        if 'adaptive_threholds' in self.parameters:
-            self.adaptive_threholds = self.parameters['adaptive_threholds']
+        if 'adaptive_thresholds' in self.parameters:
+            self.adaptive_thresholds = self.parameters['adaptive_thresholds']
         else:
-            self.adaptive_threholds = self.parameters['adaptive_threholds']
-        if self.adaptive_threholds:
+            self.adaptive_thresholds = False
+        if self.adaptive_thresholds:
             self.rms_window_len = self.parameters['adaptive_rms_window_len']
             self.adaptive_rms_stream = self.parameters['adaptive_rms_stream']
             self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float32)
             self.mean_squared_buffer_index = 0
             self.mean_squared_buffer_full = False
-            self.mean_squared_last = np.zeros((self.n_channels, 1), dtype=np.float32)
-            self.mean_squared_new = np.zeros((self.n_channels, 1), dtype=np.float32)
-            self.root_mean_squared = np.zeros((self.n_channels, 1), dtype=np.float32)
+            self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float32)
+            self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float32)
+            self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float32)
 
         # define timing and sync keys
         if 'sync_key' in self.parameters:
@@ -495,13 +495,13 @@ class ThresholdExtraction(BRANDNode):
                         continue  # skip writing to Redis
 
                 # Adaptive spike thresholding
-                if self.adaptive_threholds:
+                if self.adaptive_thresholds:
                     # Compute MS for samples corresponding to current ms
                     self.mean_squared_new = np.mean(filt_buffer**2, axis=1)
                     # Update rolling MS iteratively using new and last stored sample
-                    self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[self.mean_squared_buffer_index])/self.rms_window_len
+                    self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[:,self.mean_squared_buffer_index])/self.rms_window_len
                     # Store new MS in buffer, overrtiting oldest sample
-                    self.mean_squared_buffer[self.mean_squared_buffer_index] = self.mean_squared_new
+                    self.mean_squared_buffer[:,self.mean_squared_buffer_index] = self.mean_squared_new
                     # Circular buffer
                     self.mean_squared_buffer_index += 1
                     if self.mean_squared_buffer_index >= self.rms_window_len:
@@ -542,7 +542,7 @@ class ThresholdExtraction(BRANDNode):
                     filt_dict[self.time_key] = time_now
                     # add the filtered stuff to the pipeline
                     p.xadd(filt_stream, filt_dict)
-                if self.adaptive_threholds:
+                if self.adaptive_thresholds:
                     # Update rms_dict for writing to Redis
                     rms_dict[self.sync_key] = json.dumps(sync_dict)  
                     rms_dict[b'timestamps'] = samp_time_current.tobytes()    
