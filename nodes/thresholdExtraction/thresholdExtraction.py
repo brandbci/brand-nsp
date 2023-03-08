@@ -150,6 +150,21 @@ class ThresholdExtraction(BRANDNode):
         for g_idx in range(len(self.car_groups)):
             self.car_groups[g_idx] = list(set(self.car_groups[g_idx]).intersection(set(self.ch_mask)))
 
+        # initialize adaptive threholding
+        if 'adaptive_threholds' in self.parameters:
+            self.adaptive_threholds = self.parameters['adaptive_threholds']
+        else:
+            self.adaptive_threholds = self.parameters['adaptive_threholds']
+        if self.adaptive_threholds:
+            self.rms_window_len = self.parameters['adaptive_rms_window_len']
+            self.adaptive_rms_stream = self.parameters['adaptive_rms_stream']
+            self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float32)
+            self.mean_squared_buffer_index = 0
+            self.mean_squared_buffer_full = False
+            self.mean_squared_last = np.zeros((self.n_channels, 1), dtype=np.float32)
+            self.mean_squared_new = np.zeros((self.n_channels, 1), dtype=np.float32)
+            self.root_mean_squared = np.zeros((self.n_channels, 1), dtype=np.float32)
+
         # define timing and sync keys
         if 'sync_key' in self.parameters:
             self.sync_key = self.parameters['sync_key'].encode()
@@ -416,6 +431,7 @@ class ThresholdExtraction(BRANDNode):
         # initialize stream entries
         cross_dict = {}
         filt_dict = {}
+        rms_dict = {}
         sync_dict = {self.sync_source_id: int(samp_times[0])}
 
         # initialize xread stream dictionary
@@ -478,6 +494,26 @@ class ThresholdExtraction(BRANDNode):
                         buffer_fill += n_samp  # count the samples added
                         continue  # skip writing to Redis
 
+                # Adaptive spike thresholding
+                if self.adaptive_threholds:
+                    # Compute MS for samples corresponding to current ms
+                    self.mean_squared_new = np.mean(filt_buffer**2, axis=1)
+                    # Update rolling MS iteratively using new and last stored sample
+                    self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[self.mean_squared_buffer_index])/self.rms_window_len
+                    # Store new MS in buffer, overrtiting oldest sample
+                    self.mean_squared_buffer[self.mean_squared_buffer_index] = self.mean_squared_new
+                    # Circular buffer
+                    self.mean_squared_buffer_index += 1
+                    if self.mean_squared_buffer_index >= self.rms_window_len:
+                        self.mean_squared_buffer_index = 0
+                        self.mean_squared_buffer_full = True
+                    # Compute RMS
+                    self.root_mean_squared = np.sqrt(self.mean_squared_last)
+                    # If buffer has filled up, update thresholds using rolling RMS
+                    if self.mean_squared_buffer_full:
+                        self.thresholds = (self.thresh_mult * self.root_mean_squared).reshape(-1,1)
+                        thresholds = self.thresholds
+
                 sync_dict[self.sync_source_id] = int(samp_time_current[0])
                 cross_dict[self.sync_key] = json.dumps(sync_dict)
                 cross_dict[b'timestamps'] = samp_time_current[0].tobytes()
@@ -506,6 +542,14 @@ class ThresholdExtraction(BRANDNode):
                     filt_dict[self.time_key] = time_now
                     # add the filtered stuff to the pipeline
                     p.xadd(filt_stream, filt_dict)
+                if self.adaptive_threholds:
+                    # Update rms_dict for writing to Redis
+                    rms_dict[self.sync_key] = json.dumps(sync_dict)  
+                    rms_dict[b'timestamps'] = samp_time_current.tobytes()    
+                    rms_dict[b'samples'] = self.root_mean_squared.astype(
+                        np.float32).tobytes()  
+                    rms_dict[self.time_key] = time_now   
+                    p.xadd(self.adaptive_rms_stream, rms_dict)             
 
                 # write to Redis
                 p.execute()
