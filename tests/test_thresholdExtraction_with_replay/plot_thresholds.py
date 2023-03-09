@@ -64,8 +64,16 @@ while busy_loading:
         print('Redis is busy loading dataset in memory')
         time.sleep(1)
 
+# %%
+# Load replayed RDB id
+
+latest_supergraph_entry = r.xrevrange(b'supergraph_stream', count=1)
+supergraph = json.loads(latest_supergraph_entry[0][1][b'data'])
+replayed_rdb_path = supergraph['nodes']['replay_streams']['parameters']['rdb_file']
+replayed_block_id = os.path.basename(replayed_rdb_path).split('.')[0]
+
 # %% 
-# Load stream data
+# Load RMS stream data
 
 decoded_streams  = {}
 
@@ -112,91 +120,183 @@ if b'rms_continuous_2' in r.keys('*'):
         out[i] = entry_dec
     decoded_streams['rms_continuous_2'] = out
 
-rms_1_df = pd.DataFrame(decoded_streams['rms_continuous_1'])
-rms_2_df = pd.DataFrame(decoded_streams['rms_continuous_2'])
+adaptive_threholding = False
+if b'rms_continuous_1' in r.keys('*') and b'rms_continuous_2' in r.keys('*'):
+    adaptive_threholding = True
 
-rms_1 = np.vstack(rms_1_df['samples']).T
-rms_2 = np.vstack(rms_2_df['samples']).T
-thresholds_1 = np.vstack(rms_1_df['thresholds']).T
-thresholds_2 = np.vstack(rms_2_df['thresholds']).T
-
-# %%
-# Load replayed RDB id
-
-latest_supergraph_entry = r.xrevrange(b'supergraph_stream', count=1)
-supergraph = json.loads(latest_supergraph_entry[0][1][b'data'])
-replayed_rdb_path = supergraph['nodes']['replay_streams']['parameters']['rdb_file']
-replayed_block_id = os.path.basename(replayed_rdb_path).split('.')[0]
-
-# if b'thresh_cross_1' in r.keys('*'):
-#     stream_data = r.xrange(b'thresh_cross_1')
-#     for i, (entry_id, entry_data) in tqdm(enumerate(stream_data)):
-#         entry_dec = {}
-#         for key, val in entry_data.items():
-#             if key.decode() in spec:
-#                 dtype = spec[key.decode()]
-#                 if dtype == 'str':
-#                     entry_dec[key.decode()] = val.decode()
-#                 elif dtype == 'sync':
-#                     sync_dict = json.loads(val)
-#                     for sync_key, sync_val in sync_dict.items():
-#                         entry_dec[sync_key] = sync_val
-#                 elif dtype == 'timeval':
-#                     entry_dec[key.decode()] = np.array(
-#                         timevals_to_timestamps(val)) * 1e9
-#                 elif dtype == 'timespec':
-#                     entry_dec[key.decode()] = np.array(
-#                         timespecs_to_timestamps(val)) * 1e9
-#                 else:
-#                     dat = np.frombuffer(val, dtype=dtype)
-#                     entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
-#         out[i] = entry_dec
-#     decoded_streams[stream.decode()] = out
 
 # %% 
-# Plot results
+# Load threshold crossing stream data
 
-# Plot RMS values
+if b'thresh_cross_1' in r.keys('*'):
+    stream_data = r.xrange(b'thresh_cross_1')
+    out = [None] * len(stream_data)
+    for i, (entry_id, entry_data) in tqdm(enumerate(stream_data)):
+        entry_dec = {}
+        for key, val in entry_data.items():
+            if key.decode() == 'ts':
+                dat = np.frombuffer(val, dtype=np.uint64)
+                entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
+            elif key.decode() == 'sync':
+                sync_dict = json.loads(val)
+                for sync_key, sync_val in sync_dict.items():
+                    entry_dec[sync_key] = sync_val
+            elif key.decode() == 'crossings':
+                dat = np.frombuffer(val, dtype=np.uint16)
+                entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
+        out[i] = entry_dec
+    decoded_streams['thresh_cross_1'] = out
 
-SAMPLES_PLOT = 200000
+if b'thresh_cross_2' in r.keys('*'):
+    stream_data = r.xrange(b'thresh_cross_2')
+    out = [None] * len(stream_data)
+    for i, (entry_id, entry_data) in tqdm(enumerate(stream_data)):
+        entry_dec = {}
+        for key, val in entry_data.items():
+            if key.decode() == 'ts':
+                dat = np.frombuffer(val, dtype=np.uint64)
+                entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
+            elif key.decode() == 'sync':
+                sync_dict = json.loads(val)
+                for sync_key, sync_val in sync_dict.items():
+                    entry_dec[sync_key] = sync_val
+            elif key.decode() == 'crossings':
+                dat = np.frombuffer(val, dtype=np.uint16)
+                entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
+        out[i] = entry_dec
+    decoded_streams['thresh_cross_2'] = out
 
-fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True)
+thresh_cross_1_df = pd.DataFrame(decoded_streams['thresh_cross_1'])
+thresh_cross_2_df = pd.DataFrame(decoded_streams['thresh_cross_2'])
 
-axs[0].plot(rms_1[0:,:SAMPLES_PLOT].T)
+thresh_cross_1 = np.vstack(thresh_cross_1_df['crossings']).T
+thresh_cross_2 = np.vstack(thresh_cross_2_df['crossings']).T
+
+# %%
+# Load ch_mask stream data
+
+if b'z_mask_stream' in r.keys('*'):
+    stream_data = r.xrevrange(b'z_mask_stream')
+    ch_mask = np.frombuffer(stream_data[0][1][b'channels'], dtype=np.uint16)
+
+# %% 
+# Plot adaptive threshold results
+
+if adaptive_threholding:
+
+    rms_1_df = pd.DataFrame(decoded_streams['rms_continuous_1'])
+    rms_2_df = pd.DataFrame(decoded_streams['rms_continuous_2'])
+
+    rms_1 = np.vstack(rms_1_df['samples']).T
+    rms_2 = np.vstack(rms_2_df['samples']).T
+    thresholds_1 = np.vstack(rms_1_df['thresholds']).T
+    thresholds_2 = np.vstack(rms_2_df['thresholds']).T
+
+    # Plot RMS values
+
+    SAMPLES_PLOT = 200000
+
+    fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True, facecolor='white')
+
+    axs[0].plot(rms_1[0:,:SAMPLES_PLOT].T)
+    axs[0].axvline(1000, color='k')
+    axs[0].set_xlabel('Time (ms)')
+    axs[0].set_ylabel('RMS continuous neural (bits?)')
+    axs[0].set_title('Array 1')
+
+    axs[1].plot(rms_2[0:,:SAMPLES_PLOT].T)
+    axs[1].axvline(1000, color='k')
+    axs[1].set_xlabel('Time (ms)')
+    axs[1].set_ylabel('RMS continuous neural (bits?)')
+    axs[1].set_title('Array 2')
+
+    plt.suptitle(f"Continuous RMS values for replayed block: {replayed_block_id}", fontsize=16)
+
+    plt.show()
+
+    # Plot RMS values separated
+
+    SAMPLES_PLOT = 200000
+
+    # manually remove channels
+    ch_mask = np.delete(ch_mask, np.where(ch_mask == 145))
+    ch_mask = np.delete(ch_mask, np.where(ch_mask == 160))
+    # array specific channel masks
+    ch_mask_1 = np.isin(np.arange(0,192), ch_mask)[:96]
+    ch_mask_2 = np.isin(np.arange(0,192), ch_mask)[96:]
+
+    fig, axs = plt.subplots(2, 2, sharex=True, sharey=True, figsize=(12, 10), constrained_layout=True, facecolor='white')
+
+    axs[0,0].plot(rms_1[ch_mask_1,:SAMPLES_PLOT].T)
+    axs[0,0].axvline(1000, color='k')
+    axs[0,0].set_xlabel('Time (ms)')
+    axs[0,0].set_ylabel('RMS continuous neural (bits?)')
+    axs[0,0].set_title('Array 1 (masked-in channels)')
+
+    axs[0,1].plot(rms_1[~ch_mask_1,:SAMPLES_PLOT].T)
+    axs[0,1].axvline(1000, color='k')
+    axs[0,1].set_xlabel('Time (ms)')
+    axs[0,1].set_ylabel('RMS continuous neural (bits?)')
+    axs[0,1].set_title('Array 1 (masked-out channels)')
+
+    axs[1,0].plot(rms_2[ch_mask_2,:SAMPLES_PLOT].T)
+    axs[1,0].axvline(1000, color='k')
+    axs[1,0].set_xlabel('Time (ms)')
+    axs[1,0].set_ylabel('RMS continuous neural (bits?)')
+    axs[1,0].set_title('Array 2 (masked-in channels)')
+
+    axs[1,1].plot(rms_2[~ch_mask_2,:SAMPLES_PLOT].T)
+    axs[1,1].axvline(1000, color='k')
+    axs[1,1].set_xlabel('Time (ms)')
+    axs[1,1].set_ylabel('RMS continuous neural (bits?)')
+    axs[1,1].set_title('Array 2 (masked-out channels)')
+
+    plt.suptitle(f"Continuous RMS values for replayed block: {replayed_block_id}", fontsize=16)
+
+    plt.show()
+
+    # Plot thresholds 
+
+    SAMPLES_PLOT = 3000
+
+    fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True, facecolor='white')
+
+    axs[0].plot(thresholds_1[0:,:SAMPLES_PLOT].T)
+    axs[0].axvline(1000, color='k')
+    axs[0].set_xlabel('Time (ms)')
+    axs[0].set_ylabel('Spike thresholds (bits?)')
+    axs[0].set_title('Array 1')
+
+    axs[1].plot(thresholds_2[0:,:SAMPLES_PLOT].T)
+    axs[1].axvline(1000, color='k')
+    axs[1].set_xlabel('Time (ms)')
+    axs[1].set_ylabel('Spike thresholds (bits?)')
+    axs[1].set_title('Array 2')
+
+    plt.suptitle(f"Adaptive thresholds for replayed block: {replayed_block_id}", fontsize=16)
+
+    plt.show()
+
+# %% 
+# Plot threshold crossings
+
+SAMPLES_PLOT = 10000
+
+fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True, facecolor='white')
+
+axs[0].matshow(thresh_cross_1[0:,:SAMPLES_PLOT], aspect='auto')
 axs[0].axvline(1000, color='k')
 axs[0].set_xlabel('Time (ms)')
-axs[0].set_ylabel('RMS continuous neural (bits?)')
+axs[0].set_ylabel('Channel #')
 axs[0].set_title('Array 1')
 
-axs[1].plot(rms_2[0:,:SAMPLES_PLOT].T)
+axs[1].matshow(thresh_cross_2[0:,:SAMPLES_PLOT], aspect='auto')
 axs[1].axvline(1000, color='k')
 axs[1].set_xlabel('Time (ms)')
-axs[1].set_ylabel('RMS continuous neural (bits?)')
+axs[1].set_ylabel('Channel #')
 axs[1].set_title('Array 2')
 
-plt.suptitle(f"Continuous RMS values for replayed block: {replayed_block_id}", fontsize=16)
-
-plt.show()
-
-# Plot thresholds 
-
-SAMPLES_PLOT = 3000
-
-fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True)
-
-axs[0].plot(thresholds_1[0:,:SAMPLES_PLOT].T)
-axs[0].axvline(1000, color='k')
-axs[0].set_xlabel('Time (ms)')
-axs[0].set_ylabel('Spike thresholds (bits?)')
-axs[0].set_title('Array 1')
-
-axs[1].plot(thresholds_2[0:,:SAMPLES_PLOT].T)
-axs[1].axvline(1000, color='k')
-axs[1].set_xlabel('Time (ms)')
-axs[1].set_ylabel('Spike thresholds (bits?)')
-axs[1].set_title('Array 2')
-
-plt.suptitle(f"Adaptive thresholds for replayed block: {replayed_block_id}", fontsize=16)
+plt.suptitle(f"Spikes for replayed block: {replayed_block_id}, adaptive thresholds: {b'rms_continuous_1' in r.keys('*')}", fontsize=16)
 
 plt.show()
 
@@ -205,4 +305,4 @@ plt.show()
 
 r = redis.Redis(host=REDIS_IP, port=REDIS_PORT)
 r.shutdown(nosave=True)
-
+# %%
