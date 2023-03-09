@@ -164,6 +164,7 @@ class ThresholdExtraction(BRANDNode):
             self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float32)
             self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float32)
             self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float32)
+            logging.info(f"Adaptive spike thresholds enabled, using RMS computed over {self.samp_per_stream*self.rms_window_len} 30kHz samples")
 
         # define timing and sync keys
         if 'sync_key' in self.parameters:
@@ -548,6 +549,7 @@ class ThresholdExtraction(BRANDNode):
                     rms_dict[b'timestamps'] = samp_time_current.tobytes()    
                     rms_dict[b'samples'] = self.root_mean_squared.astype(
                         np.float32).tobytes()  
+                    rms_dict[b'thresholds'] = thresholds.astype(np.float64).tobytes() 
                     rms_dict[self.time_key] = time_now   
                     p.xadd(self.adaptive_rms_stream, rms_dict)             
 
