@@ -45,7 +45,8 @@ class ThresholdExtraction(BRANDNode):
         self.n_channels = self.parameters['input_chan_per_stream']
 
         # whether to remove coincident spikes
-        self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else self.n_channels+1
+        self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else None
+        self.num_coincident = self.n_channels+1 if self.num_coincident is None else self.num_coincident
 
         # thresholds stream
         if 'thresholds_stream' in self.parameters:
