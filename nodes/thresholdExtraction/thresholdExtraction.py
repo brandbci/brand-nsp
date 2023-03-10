@@ -44,6 +44,10 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # whether to remove coincident spikes
+        self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else None
+        self.num_coincident = self.n_channels+1 if self.num_coincident is None else self.num_coincident
+
         # thresholds stream
         if 'thresholds_stream' in self.parameters:
             self.thresholds_stream = self.parameters['thresholds_stream']
@@ -416,6 +420,7 @@ class ThresholdExtraction(BRANDNode):
         # initialize stream entries
         cross_dict = {}
         filt_dict = {}
+        coinc_dict = {}
         sync_dict = {self.sync_source_id: int(samp_times[0])}
 
         # initialize xread stream dictionary
@@ -484,14 +489,28 @@ class ThresholdExtraction(BRANDNode):
                 # is there a threshold crossing in the last ms?
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
-                cross_dict[b'crossings'] = np.any(crossings, axis=1).astype(
-                    np.int16).tobytes()
+                cross_now = np.any(crossings, axis=1).astype(np.int16)
 
                 # Redis
                 p = self.r.pipeline()  # create a new pipeline
 
-                # log timestamps
                 time_now = np.uint64(time.monotonic_ns()).tobytes()
+
+                # coincident spike removal
+                tot_spikes = cross_now.sum()
+                if tot_spikes >= self.num_coincident:
+                    logging.info(f'{tot_spikes} coincident spikes detected, timestamp: {int(samp_time_current[0])}')
+                    coinc_dict[self.sync_key] = json.dumps(sync_dict)
+                    coinc_dict[b'timestamps'] = samp_time_current[0].tobytes()
+                    coinc_dict[self.time_key] = time_now
+                    coinc_dict[b'crossings'] = cross_now.tobytes()
+                    p.xadd(f'{self.NAME}_coinc', coinc_dict)
+                    cross_now[:] = 0
+
+                    
+                cross_dict[b'crossings'] = cross_now.tobytes()
+
+                # log timestamps
                 cross_dict[self.time_key] = time_now
 
                 # thresholdCrossings stream
