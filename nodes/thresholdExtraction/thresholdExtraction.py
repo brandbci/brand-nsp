@@ -420,6 +420,7 @@ class ThresholdExtraction(BRANDNode):
         # initialize stream entries
         cross_dict = {}
         filt_dict = {}
+        coinc_dict = {}
         sync_dict = {self.sync_source_id: int(samp_times[0])}
 
         # initialize xread stream dictionary
@@ -490,18 +491,26 @@ class ThresholdExtraction(BRANDNode):
                                     (filt_buffer[:, :-1] >= thresholds))
                 cross_now = np.any(crossings, axis=1).astype(np.int16)
 
-                # coincident spike removal
-                tot_spikes = cross_now.sum()
-                if tot_spikes >= self.num_coincident:
-                    cross_now[:] = 0
-                    
-                cross_dict[b'crossings'] = cross_now.tobytes()
-
                 # Redis
                 p = self.r.pipeline()  # create a new pipeline
 
-                # log timestamps
                 time_now = np.uint64(time.monotonic_ns()).tobytes()
+
+                # coincident spike removal
+                tot_spikes = cross_now.sum()
+                if tot_spikes >= self.num_coincident:
+                    logging.info(f'{tot_spikes} coincident spikes detected, timestamp: {int(samp_time_current[0])}')
+                    coinc_dict[self.sync_key] = json.dumps(sync_dict)
+                    coinc_dict[b'timestamps'] = samp_time_current[0].tobytes()
+                    coinc_dict[self.time_key] = time_now
+                    coinc_dict[b'crossings'] = cross_now.tobytes()
+                    p.xadd(f'{self.NAME}_coinc', coinc_dict)
+                    cross_now[:] = 0
+
+                    
+                cross_dict[b'crossings'] = cross_now.tobytes()
+
+                # log timestamps
                 cross_dict[self.time_key] = time_now
 
                 # thresholdCrossings stream
