@@ -70,11 +70,11 @@ nodes:
       time_key: ts
       sync_source_id: nsp_idx_1
       nsp_channels: *nsp_channels
-      thresholds_stream: thresh_norm
+      thresholds_stream: thresholds
       thresholds_ch_range: [0,96]
       ch_mask_stream: z_mask_stream
       adaptive_thresholds: True
-      adaptive_rms_window_len: 1000 # 1s at 1ms per entry
+      adaptive_rms_window_len: 2000 # 2s at 1ms per entry
       adaptive_rms_stream: rms_continuous_1
 
 
@@ -107,11 +107,11 @@ nodes:
       time_key: ts
       sync_source_id: nsp_idx_2
       nsp_channels: *nsp_channels
-      thresholds_stream: thresh_norm
+      thresholds_stream: thresholds
       thresholds_ch_range: [96,192]
       ch_mask_stream: z_mask_stream
       adaptive_thresholds: True
-      adaptive_rms_window_len: 1000 # 1s at 1ms per entry
+      adaptive_rms_window_len: 2000 # 2s at 1ms per entry
       adaptive_rms_stream: rms_continuous_2
 
 # derivatives:

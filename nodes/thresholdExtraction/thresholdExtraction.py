@@ -44,6 +44,10 @@ class ThresholdExtraction(BRANDNode):
         # number of channels
         self.n_channels = self.parameters['input_chan_per_stream']
 
+        # whether to remove coincident spikes
+        self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else None
+        self.num_coincident = self.n_channels+1 if self.num_coincident is None else self.num_coincident
+
         # thresholds stream
         if 'thresholds_stream' in self.parameters:
             self.thresholds_stream = self.parameters['thresholds_stream']
@@ -158,12 +162,12 @@ class ThresholdExtraction(BRANDNode):
         if self.adaptive_thresholds:
             self.rms_window_len = self.parameters['adaptive_rms_window_len']
             self.adaptive_rms_stream = self.parameters['adaptive_rms_stream']
-            self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float32)
+            self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float64)
             self.mean_squared_buffer_index = 0
             self.mean_squared_buffer_full = False
-            self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float32)
-            self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float32)
-            self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float32)
+            self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float64)
+            self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float64)
+            self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float64)
             logging.info(f"Adaptive spike thresholds enabled, using RMS computed over {self.samp_per_stream*self.rms_window_len} 30kHz samples")
 
         # define timing and sync keys
@@ -433,6 +437,7 @@ class ThresholdExtraction(BRANDNode):
         cross_dict = {}
         filt_dict = {}
         rms_dict = {}
+        coinc_dict = {}
         sync_dict = {self.sync_source_id: int(samp_times[0])}
 
         # initialize xread stream dictionary
@@ -521,14 +526,29 @@ class ThresholdExtraction(BRANDNode):
                 # is there a threshold crossing in the last ms?
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
-                cross_dict[b'crossings'] = np.any(crossings, axis=1).astype(
-                    np.int16).tobytes()
+                cross_now = np.any(crossings, axis=1).astype(np.int16)
 
                 # Redis
                 p = self.r.pipeline()  # create a new pipeline
 
                 # log timestamps
                 time_now = np.uint64(time.monotonic_ns()).tobytes()
+
+                # coincident spike removal
+                tot_spikes = cross_now.sum()
+                if tot_spikes >= self.num_coincident:
+                    logging.info(f'{tot_spikes} coincident spikes detected, timestamp: {int(samp_time_current[0])}')
+                    coinc_dict[self.sync_key] = json.dumps(sync_dict)
+                    coinc_dict[b'timestamps'] = samp_time_current[0].tobytes()
+                    coinc_dict[self.time_key] = time_now
+                    coinc_dict[b'crossings'] = cross_now.tobytes()
+                    p.xadd(f'{self.NAME}_coinc', coinc_dict)
+                    cross_now[:] = 0
+
+                    
+                cross_dict[b'crossings'] = cross_now.tobytes()
+
+                # log timestamps
                 cross_dict[self.time_key] = time_now
 
                 # thresholdCrossings stream
@@ -548,7 +568,7 @@ class ThresholdExtraction(BRANDNode):
                     rms_dict[self.sync_key] = json.dumps(sync_dict)  
                     rms_dict[b'timestamps'] = samp_time_current.tobytes()    
                     rms_dict[b'samples'] = self.root_mean_squared.astype(
-                        np.float32).tobytes()  
+                        np.float64).tobytes()  
                     rms_dict[b'thresholds'] = thresholds.astype(np.float64).tobytes() 
                     rms_dict[self.time_key] = time_now   
                     p.xadd(self.adaptive_rms_stream, rms_dict)             
@@ -560,11 +580,16 @@ class ThresholdExtraction(BRANDNode):
                 logging.warning("No neural data has been received in the"
                                 f" last {timeout} ms")
 
-    def terminate(self, *_):
-        logging.info('SIGINT received, Exiting')
-        gc.collect()
-        sys.exit(0)
-
+    def terminate(self, sig, frame):
+        if hasattr(self, 'adaptive_thresholds') and 
+                hasattr(self, 'thresholds') and 
+                hasattr(self, 'thresholds_stream'):
+            if self.adaptive_thresholds and 
+                    self.thresholds is not None and
+                    self.thresholds_stream is not None:
+                self.r.xadd(self.thresholds_stream, 'thresholds': self.thresholds.tobytes())
+                logging.info(f'Logging latest adaptive thresholds to stream: {self.thresholds_stream}')
+        return BRANDNode.terminate(self, sig, frame)
 
 # Filtering functions
 def get_filter_func(demean, causal=False, use_fir=True):
