@@ -23,9 +23,9 @@ logger.setLevel(logging.DEBUG)
 # %% 
 # Start Redis 
 
-SAVE_DIR = '/samba/data/sim/2023-03-08/RawData'
+SAVE_DIR = '/samba/data/sim/2023-03-13/RawData'
 RDB_DIR = os.path.join(SAVE_DIR,'RDB')
-RDB_FILENAME = 'sim_230308_020.rdb'
+RDB_FILENAME = 'sim_230313_006.rdb'
 REDIS_IP = '127.0.0.1'
 REDIS_PORT = 18000
 
@@ -91,7 +91,7 @@ if b'rms_continuous_1' in r.keys('*'):
                 for sync_key, sync_val in sync_dict.items():
                     entry_dec[sync_key] = sync_val
             elif key.decode() == 'samples':
-                dat = np.frombuffer(val, dtype=np.float32)
+                dat = np.frombuffer(val, dtype=np.float64)
                 entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
             elif key.decode() == 'thresholds':
                 dat = np.frombuffer(val, dtype=np.float64)
@@ -112,7 +112,7 @@ if b'rms_continuous_2' in r.keys('*'):
                 for sync_key, sync_val in sync_dict.items():
                     entry_dec[sync_key] = sync_val
             elif key.decode() == 'samples':
-                dat = np.frombuffer(val, dtype=np.float32)
+                dat = np.frombuffer(val, dtype=np.float64)
                 entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
             elif key.decode() == 'thresholds':
                 dat = np.frombuffer(val, dtype=np.float64)
@@ -199,13 +199,13 @@ if adaptive_threholding:
     fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True, facecolor='white')
 
     axs[0].plot(rms_1[0:,:SAMPLES_PLOT].T)
-    axs[0].axvline(1000, color='k')
+    axs[0].axvline(2000, color='k')
     axs[0].set_xlabel('Time (ms)')
     axs[0].set_ylabel('RMS continuous neural (bits?)')
     axs[0].set_title('Array 1')
 
     axs[1].plot(rms_2[0:,:SAMPLES_PLOT].T)
-    axs[1].axvline(1000, color='k')
+    axs[1].axvline(2000, color='k')
     axs[1].set_xlabel('Time (ms)')
     axs[1].set_ylabel('RMS continuous neural (bits?)')
     axs[1].set_title('Array 2')
@@ -228,25 +228,25 @@ if adaptive_threholding:
     fig, axs = plt.subplots(2, 2, sharex=True, sharey=True, figsize=(12, 10), constrained_layout=True, facecolor='white')
 
     axs[0,0].plot(rms_1[ch_mask_1,:SAMPLES_PLOT].T)
-    axs[0,0].axvline(1000, color='k')
+    axs[0,0].axvline(2000, color='k')
     axs[0,0].set_xlabel('Time (ms)')
     axs[0,0].set_ylabel('RMS continuous neural (bits?)')
     axs[0,0].set_title('Array 1 (masked-in channels)')
 
     axs[0,1].plot(rms_1[~ch_mask_1,:SAMPLES_PLOT].T)
-    axs[0,1].axvline(1000, color='k')
+    axs[0,1].axvline(2000, color='k')
     axs[0,1].set_xlabel('Time (ms)')
     axs[0,1].set_ylabel('RMS continuous neural (bits?)')
     axs[0,1].set_title('Array 1 (masked-out channels)')
 
     axs[1,0].plot(rms_2[ch_mask_2,:SAMPLES_PLOT].T)
-    axs[1,0].axvline(1000, color='k')
+    axs[1,0].axvline(2000, color='k')
     axs[1,0].set_xlabel('Time (ms)')
     axs[1,0].set_ylabel('RMS continuous neural (bits?)')
     axs[1,0].set_title('Array 2 (masked-in channels)')
 
     axs[1,1].plot(rms_2[~ch_mask_2,:SAMPLES_PLOT].T)
-    axs[1,1].axvline(1000, color='k')
+    axs[1,1].axvline(2000, color='k')
     axs[1,1].set_xlabel('Time (ms)')
     axs[1,1].set_ylabel('RMS continuous neural (bits?)')
     axs[1,1].set_title('Array 2 (masked-out channels)')
@@ -262,13 +262,13 @@ if adaptive_threholding:
     fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True, facecolor='white')
 
     axs[0].plot(thresholds_1[0:,:SAMPLES_PLOT].T)
-    axs[0].axvline(1000, color='k')
+    axs[0].axvline(2000, color='k')
     axs[0].set_xlabel('Time (ms)')
     axs[0].set_ylabel('Spike thresholds (bits?)')
     axs[0].set_title('Array 1')
 
     axs[1].plot(thresholds_2[0:,:SAMPLES_PLOT].T)
-    axs[1].axvline(1000, color='k')
+    axs[1].axvline(2000, color='k')
     axs[1].set_xlabel('Time (ms)')
     axs[1].set_ylabel('Spike thresholds (bits?)')
     axs[1].set_title('Array 2')
@@ -285,13 +285,13 @@ SAMPLES_PLOT = 10000
 fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True, facecolor='white')
 
 axs[0].matshow(thresh_cross_1[0:,:SAMPLES_PLOT], aspect='auto')
-axs[0].axvline(1000, color='k')
+axs[0].axvline(2000, color='k')
 axs[0].set_xlabel('Time (ms)')
 axs[0].set_ylabel('Channel #')
 axs[0].set_title('Array 1')
 
 axs[1].matshow(thresh_cross_2[0:,:SAMPLES_PLOT], aspect='auto')
-axs[1].axvline(1000, color='k')
+axs[1].axvline(2000, color='k')
 axs[1].set_xlabel('Time (ms)')
 axs[1].set_ylabel('Channel #')
 axs[1].set_title('Array 2')

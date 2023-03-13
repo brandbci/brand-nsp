@@ -588,7 +588,7 @@ class ThresholdExtraction(BRANDNode):
                     self.thresholds is not None and 
                     self.thresholds_stream is not None):
                 self.r.xadd(self.thresholds_stream, {'thresholds': self.thresholds.tobytes()})
-                logging.info(f'Logging latest adaptive thresholds to stream: {self.thresholds_stream}')
+                logging.info(f'Logging latest adaptive thresholds to stream: \'{self.thresholds_stream}\'')
         return BRANDNode.terminate(self, sig, frame)
 
 # Filtering functions
