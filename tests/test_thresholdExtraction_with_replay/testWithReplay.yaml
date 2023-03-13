@@ -77,7 +77,6 @@ nodes:
       adaptive_rms_window_len: 2000 # 2s at 1ms per entry
       adaptive_rms_stream: rms_continuous_1
 
-
   - name: thresholdExtraction
     nickname: thresh_cross_2
     machine: brand
@@ -114,6 +113,13 @@ nodes:
       adaptive_rms_window_len: 2000 # 2s at 1ms per entry
       adaptive_rms_stream: rms_continuous_2
 
-# derivatives:
-
-#   - placeholder
+derivatives:
+  - updateThresholds:
+      name: updateThresholds.py
+      module: ../brand-modules/brand-nsp
+      autorun: True
+      parameters:
+        input_stream_name: ['rms_continuous_1', 'rms_continuous_2']
+        input_stream_key: ['thresholds', 'thresholds']
+        nsp_channels: [*nsp_channels, *nsp_channels]
+        thresholds_stream: thresholds

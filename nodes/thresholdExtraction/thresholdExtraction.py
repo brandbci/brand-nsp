@@ -544,7 +544,6 @@ class ThresholdExtraction(BRANDNode):
                     coinc_dict[b'crossings'] = cross_now.tobytes()
                     p.xadd(f'{self.NAME}_coinc', coinc_dict)
                     cross_now[:] = 0
-
                     
                 cross_dict[b'crossings'] = cross_now.tobytes()
 
@@ -580,16 +579,16 @@ class ThresholdExtraction(BRANDNode):
                 logging.warning("No neural data has been received in the"
                                 f" last {timeout} ms")
 
-    def terminate(self, sig, frame):
-        if (hasattr(self, 'adaptive_thresholds') and 
-                hasattr(self, 'thresholds') and 
-                hasattr(self, 'thresholds_stream')):
-            if (self.adaptive_thresholds and 
-                    self.thresholds is not None and 
-                    self.thresholds_stream is not None):
-                self.r.xadd(self.thresholds_stream, {'thresholds': self.thresholds.tobytes()})
-                logging.info(f'Logging latest adaptive thresholds to stream: \'{self.thresholds_stream}\'')
-        return BRANDNode.terminate(self, sig, frame)
+    # def terminate(self, sig, frame):
+    #     if (hasattr(self, 'adaptive_thresholds') and 
+    #             hasattr(self, 'thresholds') and 
+    #             hasattr(self, 'thresholds_stream')):
+    #         if (self.adaptive_thresholds and 
+    #                 self.thresholds is not None and 
+    #                 self.thresholds_stream is not None):
+    #             self.r.xadd(self.thresholds_stream, {'thresholds': self.thresholds.tobytes()})
+    #             logging.info(f'Logging latest adaptive thresholds to stream: \'{self.thresholds_stream}\'')
+    #     return BRANDNode.terminate(self, sig, frame)
 
 # Filtering functions
 def get_filter_func(demean, causal=False, use_fir=True):
