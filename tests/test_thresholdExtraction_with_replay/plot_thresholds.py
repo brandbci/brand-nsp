@@ -23,9 +23,9 @@ logger.setLevel(logging.DEBUG)
 # %% 
 # Start Redis 
 
-SAVE_DIR = '/samba/data/sim/2023-03-13/RawData'
+SAVE_DIR = '/samba/data/sim/2023-03-14/RawData'
 RDB_DIR = os.path.join(SAVE_DIR,'RDB')
-RDB_FILENAME = 'sim_230313_006.rdb'
+RDB_FILENAME = 'sim_230314_008.rdb'
 REDIS_IP = '127.0.0.1'
 REDIS_PORT = 18000
 
@@ -172,6 +172,30 @@ thresh_cross_2_df = pd.DataFrame(decoded_streams['thresh_cross_2'])
 thresh_cross_1 = np.vstack(thresh_cross_1_df['crossings']).T
 thresh_cross_2 = np.vstack(thresh_cross_2_df['crossings']).T
 
+# %% 
+# Load threshold crossing stream data
+
+if b'binned_spikes' in r.keys('*'):
+    stream_data = r.xrange(b'binned_spikes')
+    out = [None] * len(stream_data)
+    for i, (entry_id, entry_data) in tqdm(enumerate(stream_data)):
+        entry_dec = {}
+        for key, val in entry_data.items():
+            if key.decode() == 'ts':
+                dat = np.frombuffer(val, dtype=np.uint64)
+                entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
+            elif key.decode() == 'sync':
+                sync_dict = json.loads(val)
+                for sync_key, sync_val in sync_dict.items():
+                    entry_dec[sync_key] = sync_val
+            elif key.decode() == 'samples':
+                dat = np.frombuffer(val, dtype=np.int8)
+                entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
+        out[i] = entry_dec
+    decoded_streams['binned_spikes'] = out
+
+binned_spikes_df = pd.DataFrame(decoded_streams['binned_spikes'])
+
 # %%
 # Load ch_mask stream data
 
@@ -257,7 +281,7 @@ if adaptive_threholding:
 
     # Plot thresholds 
 
-    SAMPLES_PLOT = 3000
+    SAMPLES_PLOT = 10000
 
     fig, axs = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 10), constrained_layout=True, facecolor='white')
 
@@ -297,6 +321,27 @@ axs[1].set_ylabel('Channel #')
 axs[1].set_title('Array 2')
 
 plt.suptitle(f"Spikes for replayed block: {replayed_block_id}, adaptive thresholds: {b'rms_continuous_1' in r.keys('*')}", fontsize=16)
+
+plt.show()
+
+# %%
+# Analyze timing of threshold crossings node
+tc1_df_timing = thresh_cross_1_df.set_index('nsp_idx_1')
+bs_timing = binned_spikes_df.set_index('nsp_idx_1')
+
+timing_df = tc1_df_timing.join(bs_timing, how='outer', lsuffix='_tc1', rsuffix='_bs')
+timing_df.fillna(method="ffill", inplace=True)
+timing_df.dropna(inplace=True)
+
+init_sample = 1
+timing_df = timing_df[init_sample:-1:10]
+
+#timing_df.fillna(method="bfill", inplace=True)
+procesing_time = (timing_df['ts_bs'] - timing_df['ts_tc1']) * 1e-6
+
+fig = plt.subplots(figsize=(10, 10), constrained_layout=True, facecolor='white')
+
+plt.hist(procesing_time.values)
 
 plt.show()
 

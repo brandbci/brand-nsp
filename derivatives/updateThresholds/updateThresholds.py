@@ -128,3 +128,6 @@ for i, stream in enumerate(graph_params['input_stream_name']):
 
 r.xadd(graph_params['thresholds_stream'], {
     'thresholds': all_data.tobytes()})
+
+thresholds_stream = graph_params['thresholds_stream']
+logging.info(f'Logging latest adaptive thresholds to stream: \'{thresholds_stream}\'')
