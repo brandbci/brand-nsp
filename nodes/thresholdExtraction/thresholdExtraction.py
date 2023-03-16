@@ -565,7 +565,7 @@ class ThresholdExtraction(BRANDNode):
                 if self.adaptive_thresholds:
                     # Update rms_dict for writing to Redis
                     rms_dict[self.sync_key] = json.dumps(sync_dict)  
-                    rms_dict[b'timestamps'] = samp_time_current.tobytes()    
+                    rms_dict[b'timestamps'] = samp_time_current[0].tobytes()    
                     rms_dict[b'samples'] = self.root_mean_squared.astype(
                         np.float64).tobytes()  
                     rms_dict[b'thresholds'] = thresholds.astype(np.float64).tobytes() 

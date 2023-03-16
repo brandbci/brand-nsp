@@ -92,11 +92,6 @@ if 'thresholds_stream' not in graph_params:
     logging.error('\'thresholds_stream\' parameter is required, exiting')
     sys.exit(1)
 
-if (len(graph_params['input_stream_name']) != len(graph_params['input_stream_key']) and
-        len(graph_params['input_stream_name']) != len(graph_params['nsp_channels'])):
-    logging.error('There must be the same number of \'input_stream_name\'s , \'input_stream_key\'s, and \'nsp_channels\', exiting')
-    exit(1)
-
 if not isinstance(graph_params['input_stream_name'], list):
     graph_params['input_stream_name'] = list(graph_params['input_stream_name'])
 
@@ -105,6 +100,11 @@ if not isinstance(graph_params['input_stream_key'], list):
 
 if not isinstance(graph_params['nsp_channels'], list):
     graph_params['nsp_channels'] = list(graph_params['nsp_channels'])
+
+if (len(graph_params['input_stream_name']) != len(graph_params['input_stream_key']) or
+        len(graph_params['input_stream_name']) != len(graph_params['nsp_channels'])):
+    logging.error('There must be the same number of \'input_stream_name\'s , \'input_stream_key\'s, and \'nsp_channels\', exiting')
+    exit(1)
 
 ###############################################
 # Read in data
