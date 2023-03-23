@@ -16,9 +16,26 @@ RedisStreams:
       enable_nwb:           False
       type_nwb:             TimeSeries
       samples:
-        chan_per_stream:    $input_samp_per_stream
-        samp_per_stream:    $input_chan_per_stream
+        chan_per_stream:    $input_chan_per_stream
+        samp_per_stream:    $input_samp_per_stream
         sample_type:        int16
         nwb:
           unit:             0.25uV
           description:      Filtered broadband data
+    rms_continuous:
+      enable_nwb:           False
+      type_nwb:             TimeSeries
+      samples:
+        chan_per_stream:    $input_chan_per_stream
+        samp_per_stream:    1
+        sample_type:        float64
+        nwb:
+          unit:             0.25uV
+          description:      RMS values for filtered broadband data
+      thresholds:
+        chan_per_stream:    $input_chan_per_stream
+        samp_per_stream:    1
+        sample_type:        float64
+        nwb:
+          unit:             0.25uV
+          description:      Thresholds used for computing crossings

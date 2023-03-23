@@ -154,6 +154,22 @@ class ThresholdExtraction(BRANDNode):
         for g_idx in range(len(self.car_groups)):
             self.car_groups[g_idx] = list(set(self.car_groups[g_idx]).intersection(set(self.ch_mask)))
 
+        # initialize adaptive threholding
+        if 'adaptive_thresholds' in self.parameters:
+            self.adaptive_thresholds = self.parameters['adaptive_thresholds']
+        else:
+            self.adaptive_thresholds = False
+        if self.adaptive_thresholds:
+            self.rms_window_len = self.parameters['adaptive_rms_window_len']
+            self.adaptive_rms_stream = self.parameters['adaptive_rms_stream']
+            self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float64)
+            self.mean_squared_buffer_index = 0
+            self.mean_squared_buffer_full = False
+            self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float64)
+            self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float64)
+            self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float64)
+            logging.info(f"Adaptive spike thresholds enabled, using RMS computed over {self.samp_per_stream*self.rms_window_len} 30kHz samples")
+
         # define timing and sync keys
         if 'sync_key' in self.parameters:
             self.sync_key = self.parameters['sync_key'].encode()
@@ -420,6 +436,7 @@ class ThresholdExtraction(BRANDNode):
         # initialize stream entries
         cross_dict = {}
         filt_dict = {}
+        rms_dict = {}
         coinc_dict = {}
         sync_dict = {self.sync_source_id: int(samp_times[0])}
 
@@ -483,6 +500,26 @@ class ThresholdExtraction(BRANDNode):
                         buffer_fill += n_samp  # count the samples added
                         continue  # skip writing to Redis
 
+                # Adaptive spike thresholding
+                if self.adaptive_thresholds:
+                    # Compute MS for samples corresponding to current ms
+                    self.mean_squared_new = np.mean(filt_buffer**2, axis=1)
+                    # Update rolling MS iteratively using new and last stored sample
+                    self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[:,self.mean_squared_buffer_index])/self.rms_window_len
+                    # Store new MS in buffer, overrtiting oldest sample
+                    self.mean_squared_buffer[:,self.mean_squared_buffer_index] = self.mean_squared_new
+                    # Circular buffer
+                    self.mean_squared_buffer_index += 1
+                    if self.mean_squared_buffer_index >= self.rms_window_len:
+                        self.mean_squared_buffer_index = 0
+                        self.mean_squared_buffer_full = True
+                    # Compute RMS
+                    self.root_mean_squared = np.sqrt(self.mean_squared_last)
+                    # If buffer has filled up, update thresholds using rolling RMS
+                    if self.mean_squared_buffer_full:
+                        self.thresholds = (self.thresh_mult * self.root_mean_squared).reshape(-1,1)
+                        thresholds = self.thresholds
+
                 sync_dict[self.sync_source_id] = int(samp_time_current[0])
                 cross_dict[self.sync_key] = json.dumps(sync_dict)
                 cross_dict[b'timestamps'] = samp_time_current[0].tobytes()
@@ -494,6 +531,7 @@ class ThresholdExtraction(BRANDNode):
                 # Redis
                 p = self.r.pipeline()  # create a new pipeline
 
+                # log timestamps
                 time_now = np.uint64(time.monotonic_ns()).tobytes()
 
                 # coincident spike removal
@@ -506,7 +544,6 @@ class ThresholdExtraction(BRANDNode):
                     coinc_dict[b'crossings'] = cross_now.tobytes()
                     p.xadd(f'{self.NAME}_coinc', coinc_dict)
                     cross_now[:] = 0
-
                     
                 cross_dict[b'crossings'] = cross_now.tobytes()
 
@@ -525,6 +562,15 @@ class ThresholdExtraction(BRANDNode):
                     filt_dict[self.time_key] = time_now
                     # add the filtered stuff to the pipeline
                     p.xadd(filt_stream, filt_dict)
+                if self.adaptive_thresholds:
+                    # Update rms_dict for writing to Redis
+                    rms_dict[self.sync_key] = json.dumps(sync_dict)  
+                    rms_dict[b'timestamps'] = samp_time_current[0].tobytes()    
+                    rms_dict[b'samples'] = self.root_mean_squared.astype(
+                        np.float64).tobytes()  
+                    rms_dict[b'thresholds'] = thresholds.astype(np.float64).tobytes() 
+                    rms_dict[self.time_key] = time_now   
+                    p.xadd(self.adaptive_rms_stream, rms_dict)             
 
                 # write to Redis
                 p.execute()
@@ -533,11 +579,16 @@ class ThresholdExtraction(BRANDNode):
                 logging.warning("No neural data has been received in the"
                                 f" last {timeout} ms")
 
-    def terminate(self, *_):
-        logging.info('SIGINT received, Exiting')
-        gc.collect()
-        sys.exit(0)
-
+    # def terminate(self, sig, frame):
+    #     if (hasattr(self, 'adaptive_thresholds') and 
+    #             hasattr(self, 'thresholds') and 
+    #             hasattr(self, 'thresholds_stream')):
+    #         if (self.adaptive_thresholds and 
+    #                 self.thresholds is not None and 
+    #                 self.thresholds_stream is not None):
+    #             self.r.xadd(self.thresholds_stream, {'thresholds': self.thresholds.tobytes()})
+    #             logging.info(f'Logging latest adaptive thresholds to stream: \'{self.thresholds_stream}\'')
+    #     return BRANDNode.terminate(self, sig, frame)
 
 # Filtering functions
 def get_filter_func(demean, causal=False, use_fir=True):

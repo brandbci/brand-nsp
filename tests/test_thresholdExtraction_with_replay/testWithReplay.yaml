@@ -1,0 +1,167 @@
+
+# graph_name: replay
+# metadata:
+#   participant_id: sim
+#   session_description: Test replay
+
+# graph parameters
+parameters:
+  nsp_channels: &nsp_channels 96
+  total_channels: &total_channels 192
+
+nodes:
+
+  - name:                   replay_streams
+    nickname:               replay_streams
+    module:                 ../brand-modules/brand-emory
+    run_priority:           99
+    parameters:
+      log:                  DEBUG
+      time_key:             [BRANDS_time, BRANDS_time]
+      time_type:            [c_timespec, c_timespec]
+      streams:              [nsp_neural_1, nsp_neural_2]
+      #init_streams:         [thresh_norm, normalize_exit_parameters, z_mask_stream]
+      rdb_file:             /samba/prev_data/T11/2023-02-19/RawData/RDB/t11_230219_003.rdb
+
+  - name: bin_multiple
+    nickname: bin_multiple
+    machine: brand
+    module: ../brand-modules/brand-emory
+    run_priority: 99
+    cpu_affinity: 10
+    redis_outputs:
+      binned_spikes: binned_spikes
+    parameters:
+      chan_per_stream: *nsp_channels
+      total_channels: *total_channels
+      bin_size: 10
+      log: INFO
+      input_streams: [thresh_cross_1, thresh_cross_2]
+      input_field: crossings
+      input_dtype: int16
+      output_stream: binned_spikes
+
+  - name: thresholdExtraction
+    nickname: thresh_cross_1
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 8-9
+    redis_outputs:
+      thresh_cross_1: thresh_cross
+      rms_continuous_1: rms_continuous
+    parameters:
+      log: INFO
+      pack_per_call: 1 # number of redis packets to pull per loop
+      thresh_mult: -3.5 # threshold Values
+      thresh_calc_len: 2000 # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      enable_CAR: True
+      CAR_group_sizes: 96
+      output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      input_name: nsp_neural_1
+      input_chan_per_stream: *nsp_channels # number of channels
+      input_samp_per_stream: 30 # number of samples per channel per redis entry
+      input_samp_freq: 30000
+      sync_key: sync
+      time_key: ts
+      sync_source_id: nsp_idx_1
+      nsp_channels: *nsp_channels
+      thresholds_stream: thresholds
+      thresholds_ch_range: [0,96]
+      ch_mask_stream: z_mask_stream
+      adaptive_thresholds: True
+      adaptive_rms_window_len: 2000 # 2s at 1ms per entry
+      adaptive_rms_stream: rms_continuous_1
+
+  - name: thresholdExtraction
+    nickname: thresh_cross_2
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 6-7
+    redis_outputs:
+      thresh_cross_2: thresh_cross
+      rms_continuous_2: rms_continuous
+    parameters:
+      log: INFO
+      pack_per_call: 1 # number of redis packets to pull per loop
+      thresh_mult: -3.5 # threshold Values
+      thresh_calc_len: 2000 # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      enable_CAR: True
+      CAR_group_sizes: 96
+      output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      input_name: nsp_neural_2
+      input_chan_per_stream: *nsp_channels # number of channels
+      input_samp_per_stream: 30 # number of samples per channel per redis entry
+      input_samp_freq: 30000
+      sync_key: sync
+      time_key: ts
+      sync_source_id: nsp_idx_2
+      nsp_channels: *nsp_channels
+      thresholds_stream: thresholds
+      thresholds_ch_range: [96,192]
+      ch_mask_stream: z_mask_stream
+      adaptive_thresholds: True
+      adaptive_rms_window_len: 2000 # 2s at 1ms per entry
+      adaptive_rms_stream: rms_continuous_2
+
+derivatives:
+
+  - updateThresholds:
+      name: updateThresholds.py
+      module: ../brand-modules/brand-nsp
+      autorun: True
+      parameters:
+        input_stream_name: ['rms_continuous_1', 'rms_continuous_2']
+        input_stream_key: ['thresholds', 'thresholds']
+        nsp_channels: [*nsp_channels, *nsp_channels]
+        thresholds_stream: thresholds
+
+  - exportNWB:
+      parameters:
+        devices_file: ../config/T11/devices.yaml
+        participant_file: ../config/T11/T11.yaml
+        description: record replayed data
+        sync_key: sync
+        time_key: ts
+        sync_timing_hz: 30000
+        ch_mask_stream: z_mask_stream
+        #find_reset_stream: cursorData
+        #reset_keys: ['nsp_idx_1', 'nsp_idx_2']
+        thresh_stream: thresholds
+        norm_stream: ['normalize_exit_parameters', normalization_parameters]
+        #denorm_file: /samba/data/denorm.yaml
+        streams:
+          # thresh_cross_1_filt:
+          #   enable: True
+          #   sync: ["nsp_idx_1"]
+          thresh_cross_1:
+            enable: True
+            sync: ["nsp_idx_1"]
+            rate: 1000
+          rms_continuous_1:
+            enable: True
+            sync: ["nsp_idx_1"]
+            rate: 1000
+          thresh_cross_2:
+            enable: True
+            sync: ["nsp_idx_2"]
+            rate: 1000
+          rms_continuous_2:
+            enable: True
+            sync: ["nsp_idx_2"]
+            rate: 1000
+          binned_spikes:
+            enable: True
+            sync: ["nsp_idx_1", "nsp_idx_2"]
+            rate: 100

@@ -102,7 +102,6 @@ supergraph = json.loads(entry_dict[b'data'].decode())
 
 graph_params = supergraph['derivatives'][NAME]['parameters']
 
-
 ###############################################
 # Load parameters
 ###############################################
