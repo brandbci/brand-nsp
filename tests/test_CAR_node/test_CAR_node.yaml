@@ -16,7 +16,7 @@ nodes:
     machine: brand
     module: ../brand-modules/brand-emory
     run_priority: 99
-    cpu_affinity: 10
+    cpu_affinity: 14
     redis_outputs:
       binned_spikes: binned_spikes
     parameters:
@@ -34,7 +34,7 @@ nodes:
     machine: brand
     module: ../brand-modules/brand-nsp
     run_priority: 99
-    cpu_affinity: 8
+    cpu_affinity: 10-11
     redis_outputs:
       thresh_cross_1: thresh_cross
     parameters:
@@ -63,7 +63,7 @@ nodes:
     machine: brand
     module: ../brand-modules/brand-nsp
     run_priority: 99
-    cpu_affinity: 9
+    cpu_affinity: 12-13
     redis_outputs:
       thresh_cross_2: thresh_cross
     parameters:
@@ -88,31 +88,31 @@ nodes:
       nsp_channels: *nsp_channels
 
   - name: reReference
-    nickname: reRef2
-    machine: brand
-    module: ../brand-modules/brand-nsp
-    run_priority: 99
-    cpu_affinity: 7
-    redis_outputs:
-      # nsp_neural_2: ContinuousNeural
-    parameters:
-      input_stream_name: nsp_neural_2
-      output_stream_name: reref_neural_2
-      samp_freq: 30000
-      chan_per_stream: *nsp_channels
-      samp_per_stream: 30
-
-  - name: reReference
     nickname: reRef1
     machine: brand
     module: ../brand-modules/brand-nsp
     run_priority: 99
-    cpu_affinity: 6
+    cpu_affinity: 6-7
     redis_outputs:
       # nsp_neural_1: ContinuousNeural
     parameters:
       input_stream_name: nsp_neural_1
       output_stream_name: reref_neural_1
+      samp_freq: 30000
+      chan_per_stream: *nsp_channels
+      samp_per_stream: 30
+
+  - name: reReference
+    nickname: reRef2
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 8-9
+    redis_outputs:
+      # nsp_neural_2: ContinuousNeural
+    parameters:
+      input_stream_name: nsp_neural_2
+      output_stream_name: reref_neural_2
       samp_freq: 30000
       chan_per_stream: *nsp_channels
       samp_per_stream: 30

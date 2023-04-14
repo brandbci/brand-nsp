@@ -26,7 +26,7 @@ logger.setLevel(logging.DEBUG)
 
 SAVE_DIR = '/samba/data/sim/2023-04-14/RawData'
 RDB_DIR = os.path.join(SAVE_DIR,'RDB')
-RDB_FILENAME = 'sim_230414_002.rdb'
+RDB_FILENAME = 'sim_230414_011.rdb'
 REDIS_IP = '127.0.0.1'
 REDIS_PORT = 18000
 
@@ -69,7 +69,7 @@ while busy_loading:
 
 N_per_array = 96
 
-decoded_streams  = {}
+decoded_streams = {}
 
 if b'nsp_neural_1' in r.keys('*'):
     stream_data = r.xrange(b'nsp_neural_1')
@@ -234,11 +234,27 @@ binned_spikes_df.set_index('nsp_idx_1', inplace=True)
 
 # %%
 
-reref_1_arr = np.hstack(reref_neural_1_df['samples'].values)
 nsp_1_arr = np.hstack(nsp_neural_1_df['samples'].values)
+reref_1_arr = np.hstack(reref_neural_1_df['samples'].values)
 
-plt.plot(reref_1_arr[0,:3000])
-plt.plot(nsp_1_arr[0,:3000]+1000)
+sample_chs = [0, 1, 2, 3]
+T = 3000
+t = np.arange(T)/30
+
+_, axs = plt.subplots(len(sample_chs), 2, sharex=True, sharey=True, figsize=(10, 10), facecolor='w')
+
+for i, ch in enumerate(sample_chs):
+    axs[i, 0].plot(t, nsp_1_arr[ch, :T], color='b')
+    axs[i, 1].plot(t, reref_1_arr[ch, :T], color='g')
+    axs[i, 0].set_ylabel('ch {}'.format(ch))
+
+axs[-1, 0].set_xlabel('Time [ms]')
+axs[-1, 1].set_xlabel('Time [ms]')
+axs[0, 0].set_title('cerebusAdapter')
+axs[0, 1].set_title('reReference')
+
+# plt.plot(reref_1_arr[0,:3000])
+# plt.plot(nsp_1_arr[0,:3000]+1000)
 plt.show()
 
 # %%
@@ -251,7 +267,7 @@ all_df_2 = nsp_neural_2_df.join(reref_neural_2_df, how='inner', lsuffix='_nsp', 
 all_df_2 = all_df_2.join(thresh_cross_2_df, how='inner', rsuffix='_thresh')
 all_df_2 = all_df_2.join(binned_spikes_df, how='inner', rsuffix='_binned')
 
-_, axs = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(10, 10))
+_, axs = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(10, 6), facecolor='w')
 
 axs[0].plot(1e3*(all_df_1['ts_reref']  - all_df_1['ts_nsp']), label='Re-reference')
 axs[0].plot(1e3*(all_df_1['ts']        - all_df_1['ts_nsp']), label='Threshold extraction')
@@ -261,6 +277,8 @@ axs[1].plot(1e3*(all_df_2['ts_reref']  - all_df_2['ts_nsp']), label='Re-referenc
 axs[1].plot(1e3*(all_df_2['ts']        - all_df_2['ts_nsp']), label='Threshold extraction')
 #axs[1].plot(1e3*(all_df_2['ts_binned'] - all_df_2['ts_nsp']), label='Binning')
 
+axs[0].set_xlabel('NSP 1 timestamp')
+axs[1].set_xlabel('NSP 2 timestamp')
 axs[0].set_ylabel('Latency [ms]')
 axs[1].legend()
 

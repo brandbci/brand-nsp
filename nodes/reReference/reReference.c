@@ -61,6 +61,17 @@ int main (int argc_main, char **argv_main) {
     int samp_per_stream = graph_parameters.samp_per_stream;
     int chan_per_stream = graph_parameters.chan_per_stream;
 
+    // initialize re-referencing matrix
+    // TODO: read this from Redis
+    double coefs[chan_per_stream][chan_per_stream];
+    for (int iChan = 0; iChan < chan_per_stream; iChan++)
+    {
+        for (int jChan = 0; jChan < chan_per_stream; jChan++)
+        {
+            coefs[iChan][jChan] = 1.0/chan_per_stream;
+        }  
+    }  
+
     // argc    : The number of arguments in argv. The calculation is:
     //           int argc = 3 + 2 * 4;
     //           3                  -> xadd cerebusAdapter *
@@ -133,6 +144,11 @@ int main (int argc_main, char **argv_main) {
     char *redis_data_udp_timestamps;
     char *redis_data_samples;
 
+    int16_t sample_temp;
+    double samples[chan_per_stream][samp_per_stream];
+    double samples_reref[chan_per_stream][samp_per_stream];
+    double samples_ref_temp;
+
     while (1) {
 
         //if (flag_SIGINT) 
@@ -163,27 +179,61 @@ int main (int argc_main, char **argv_main) {
         redis_data_udp_timestamps = reply->element[0]->element[1]->element[0]->element[1]->element[5]->str;
         redis_data_samples        = reply->element[0]->element[1]->element[0]->element[1]->element[7]->str;
 
-        // This gets the current system time
-        clock_gettime(CLOCK_MONOTONIC, &current_time);
-
         for(int n = 0; n < samp_per_stream; n++)
         {         
             memcpy(&argv[ind_cerebus_timestamps + 1][n * sizeof(uint32_t)],      
                 &redis_data_nsp_timestamps[n * sizeof(uint32_t)],  
                 sizeof(uint32_t));
+            memcpy(&argv[ind_udp_received_time  + 1][n * sizeof(struct timeval)],   
+                &redis_data_udp_timestamps[n * sizeof(struct timeval)],   
+                sizeof(struct timeval)); 
+            // could be done without the loop, but would require transposing the data    
+            for (int iChan = 0; iChan < chan_per_stream; iChan++)
+            {
+                memcpy(&sample_temp,      
+                    &redis_data_samples[(n + iChan*samp_per_stream) * sizeof(int16_t)],
+                    sizeof(int16_t));
+                samples[iChan][n] = (double)sample_temp;
+
+                // memcpy(&samples[iChan][n],      
+                //     &redis_data_samples[(n + iChan*samp_per_stream) * sizeof(int16_t)],
+                //     sizeof(int16_t));
+                // memcpy(&argv[ind_samples + 1][(n + iChan*samp_per_stream) * sizeof(int16_t)],      
+                //     &redis_data_samples[(n + iChan*samp_per_stream) * sizeof(int16_t)],
+                //     sizeof(int16_t));
+            }  
+        }
+
+        // TODO: implement anything extra for LRR
+        // A linear algebra package for this matrix operation should be waaay more efficient than this
+        for(int n = 0; n < samp_per_stream; n++)
+        {         
+            for (int iChan = 0; iChan < chan_per_stream; iChan++)
+            {
+                // Compute reference from weighted sum of all channels
+                samples_ref_temp = 0;
+                for (int jChan = 0; jChan < chan_per_stream; jChan++)
+                {
+                    samples_ref_temp += samples[jChan][n] * coefs[iChan][jChan];
+                }
+                // Subtract reference from each channel
+                samples_reref[iChan][n] = samples[iChan][n] - samples_ref_temp;
+            }
+        }
+
+        // This gets the current system time
+        clock_gettime(CLOCK_MONOTONIC, &current_time);
+
+        for(int n = 0; n < samp_per_stream; n++)
+        {         
             memcpy(&argv[ind_current_time       + 1][n * sizeof(struct timespec)],      
                 &current_time,  
                 sizeof(struct timespec));
-            memcpy(&argv[ind_udp_received_time  + 1][n * sizeof(struct timeval)],   
-                &redis_data_udp_timestamps[n * sizeof(struct timeval)],   
-                sizeof(struct timeval));
-            // currently only copying samples over to test Redis
-            // should be copied to a local buffer for processing  
             for (int iChan = 0; iChan < chan_per_stream; iChan++)
             {
-                // could be done without the loop, but would require transposing the data
+                sample_temp = (int16_t)samples_reref[iChan][n];
                 memcpy(&argv[ind_samples + 1][(n + iChan*samp_per_stream) * sizeof(int16_t)],      
-                    &redis_data_samples[(n + iChan*samp_per_stream) * sizeof(int16_t)],
+                    &sample_temp,
                     sizeof(int16_t));
             }  
         }
@@ -277,69 +327,69 @@ void handler_SIGINT(int exitStatus) {
 // Helper function
 //------------------------------------
 
-// Quick and dirty function used for debugging purposes
-void print_argv(int argc, char **argv, size_t *argvlen) {
-    printf("argc = %d\n", argc);
+// // Quick and dirty function used for debugging purposes
+// void print_argv(int argc, char **argv, size_t *argvlen) {
+//     printf("argc = %d\n", argc);
 
-    for (int i = 0; i < 5; i++){
-        printf("%02d. (%s) - [%ld]\n", i, argv[i], argvlen[i]);
-    }
+//     for (int i = 0; i < 5; i++){
+//         printf("%02d. (%s) - [%ld]\n", i, argv[i], argvlen[i]);
+//     }
 
-    for (int i = 5; i < 7; i+=2){
-        printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
+//     for (int i = 5; i < 7; i+=2){
+//         printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
 
-        for (int j = 0; j < argvlen[i+1]; j+= sizeof(uint32_t)) {
-            printf("%u,",  (uint32_t) argv[i+1][j]);
-        }
+//         for (int j = 0; j < argvlen[i+1]; j+= sizeof(uint32_t)) {
+//             printf("%u,",  (uint32_t) argv[i+1][j]);
+//         }
 
-        printf("]\n");
-    }
+//         printf("]\n");
+//     }
 
-    for (int i = 7; i < 11; i+=2){
-        printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
+//     for (int i = 7; i < 11; i+=2){
+//         printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
 
-        for (int j = 0; j < argvlen[i+1]; j+= sizeof(struct timeval)) {
-            struct timeval time;
-            memcpy(&time,&argv[i+1][j], sizeof(struct timeval));
-            long milliseconds = time.tv_sec * 1000 + time.tv_usec / 1000;
-            long microseconds = time.tv_usec % 1000;
-            printf("%ld.%03ld,", milliseconds,microseconds);
-        }
+//         for (int j = 0; j < argvlen[i+1]; j+= sizeof(struct timeval)) {
+//             struct timeval time;
+//             memcpy(&time,&argv[i+1][j], sizeof(struct timeval));
+//             long milliseconds = time.tv_sec * 1000 + time.tv_usec / 1000;
+//             long microseconds = time.tv_usec % 1000;
+//             printf("%ld.%03ld,", milliseconds,microseconds);
+//         }
 
-        printf("]\n");
-    }
+//         printf("]\n");
+//     }
 
 
-    for (int i = 11; i < argc; i+=2){
-        printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
+//     for (int i = 11; i < argc; i+=2){
+//         printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
 
-        for (int j = 0; j < argvlen[i+1]; j+= sizeof(uint16_t)) {
-            printf("%u,",  (uint16_t) argv[i+1][j]);
-        }
+//         for (int j = 0; j < argvlen[i+1]; j+= sizeof(uint16_t)) {
+//             printf("%u,",  (uint16_t) argv[i+1][j]);
+//         }
 
-        printf("]\n");
-    }
+//         printf("]\n");
+//     }
 
-}
+// }
 
-uint32_t parse_ip_str(char *ip_str) {
-    unsigned char buf[sizeof(struct in_addr)];
-    int domain, s;
+// uint32_t parse_ip_str(char *ip_str) {
+//     unsigned char buf[sizeof(struct in_addr)];
+//     int domain, s;
 
-    domain = AF_INET;
-    s = inet_pton(domain, ip_str, buf);
-    if (s <= 0) {
-        if (s == 0) {
-            fprintf(stderr, "[%s] Invalid IP address: '%s'\n", NICKNAME, ip_str);
-        } else {
-            perror("inet_pton");
-        }
-        fprintf(stderr, "[%s] Reverting to 255.255.255.255\n", NICKNAME);
-        s = inet_pton(domain, "255.255.255.255", buf);
-    }
+//     domain = AF_INET;
+//     s = inet_pton(domain, ip_str, buf);
+//     if (s <= 0) {
+//         if (s == 0) {
+//             fprintf(stderr, "[%s] Invalid IP address: '%s'\n", NICKNAME, ip_str);
+//         } else {
+//             perror("inet_pton");
+//         }
+//         fprintf(stderr, "[%s] Reverting to 255.255.255.255\n", NICKNAME);
+//         s = inet_pton(domain, "255.255.255.255", buf);
+//     }
 
-    uint32_t ip_num;
-    memcpy(&ip_num, buf, 4);
+//     uint32_t ip_num;
+//     memcpy(&ip_num, buf, 4);
 
-    return ip_num;
-}
+//     return ip_num;
+// }
