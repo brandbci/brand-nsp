@@ -234,16 +234,11 @@ binned_spikes_df.set_index('nsp_idx_1', inplace=True)
 
 # %%
 
-nsp_1_ts_arr = np.hstack(nsp_neural_1_df['BRANDS_time'])
-nsp_2_ts_arr = np.hstack(nsp_neural_2_df['BRANDS_time'])
-reref_1_ts_arr = np.hstack(reref_neural_1_df['BRANDS_time'])
-reref_2_ts_arr = np.hstack(reref_neural_2_df['BRANDS_time'])
+reref_1_arr = np.hstack(reref_neural_1_df['samples'].values)
+nsp_1_arr = np.hstack(nsp_neural_1_df['samples'].values)
 
-diff_1_ts = reref_1_ts_arr - nsp_1_ts_arr
-diff_2_ts = reref_2_ts_arr - nsp_2_ts_arr
-
-plt.plot(diff_1_ts)
-plt.plot(diff_2_ts)
+plt.plot(reref_1_arr[0,:3000])
+plt.plot(nsp_1_arr[0,:3000]+1000)
 plt.show()
 
 # %%
@@ -269,4 +264,9 @@ axs[1].plot(1e3*(all_df_2['ts']        - all_df_2['ts_nsp']), label='Threshold e
 axs[0].set_ylabel('Latency [ms]')
 axs[1].legend()
 
+# %% 
+# Shutdown Redis
+
+r = redis.Redis(host=REDIS_IP, port=REDIS_PORT)
+r.shutdown(nosave=True)
 # %%
