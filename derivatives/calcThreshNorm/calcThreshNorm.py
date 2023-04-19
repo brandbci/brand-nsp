@@ -5,17 +5,18 @@ and spike rate normalization parameters,
 then stores both in a file and Redis
 """
 
-from brand.redis import xread_count
 import json
 import logging
 import numbers
 import numpy as np
 import os
-from redis import ConnectionError, Redis
 import scipy.signal
 import signal
 import sys
 import yaml
+
+from brand.redis import xread_count
+from redis import ConnectionError, Redis
 
 
 ###############################################
@@ -209,40 +210,45 @@ if 'samp_freq' in graph_params:
 else:
     samp_freq = 30000
 
-# whether to common-average reference
-if 'enable_CAR' in graph_params:
-    demean = graph_params['enable_CAR']
-    if not isinstance(demean, bool):
-        logging.error(f'\'enable_CAR\' must be of type \'bool\', but it was {demean}. Exiting')
+# re-reference type
+if 'rereference' in graph_params:
+    reref = graph_params['rereference']
+    if not isinstance(reref, str) and reref is not None:
+        logging.error(f'\'rereference\' must be of type \'str\', but it was {reref}. Exiting')
         sys.exit(1)
+    if isinstance(reref, str):
+        if reref.lower() not in ['car', 'lrr']:
+            logging.error(f'\'rereference\' must be \'CAR\' or \'LRR\', but it was {reref}. Exiting')
+            sys.exit(1)
+        reref = reref.lower()
 else:
-    demean = True
+    reref = None
 
-# list of lists of common-average reference groupings
-if demean and 'CAR_group_sizes' in graph_params:
-    car_sizes = graph_params['CAR_group_sizes']
-    if not isinstance(car_sizes, list):
-        if isinstance(car_sizes, int):
-            car_sizes = []
-            # get CAR group sizes of the specified size, until we run out of channels for the stream
+# list of lists of re-reference groupings
+if reref is not None and 'reref_group_sizes' in graph_params:
+    reref_sizes = graph_params['reref_group_sizes']
+    if not isinstance(reref_sizes, list):
+        if isinstance(reref_sizes, int):
+            reref_sizes = []
+            # get rereferencingg group sizes of the specified size, until we run out of channels for the stream
             for s in stream_info:
                 ch_count = s['structure']['chan_per_stream']
                 while ch_count > 0:
-                    car_sizes.append(min([graph_params['CAR_group_sizes'], ch_count]))
-                    ch_count -= graph_params['CAR_group_sizes']
-    car_groups = []
+                    reref_sizes.append(min([graph_params['reref_group_sizes'], ch_count]))
+                    ch_count -= graph_params['reref_group_sizes']
+    reref_groups = []
     ch_count = 0
-    for g in car_sizes:
+    for g in reref_sizes:
         if not isinstance(g, int):
-            logging.error(f'\'CAR_group_sizes\' must be a list of \'int\'s or a single \'int\', but {graph_params["CAR_group_sizes"]} was given. Exiting')
+            logging.error(f'\'reref_group_sizes\' must be a list of \'int\'s or a single \'int\', but {graph_params["reref_group_sizes"]} was given. Exiting')
             sys.exit(1)
-        car_groups.append(np.arange(ch_count, ch_count+g).tolist())
+        reref_groups.append(np.arange(ch_count, ch_count+g).tolist())
         ch_count += g
 else:
-    car_groups = []
+    reref_groups = []
     ch_count = 0
     for c in ch_per_stream:
-        car_groups.append(np.arange(ch_count, ch_count+c).tolist())
+        reref_groups.append(np.arange(ch_count, ch_count+c).tolist())
         ch_count += c
         
 # exclude channels
@@ -256,7 +262,7 @@ if 'exclude_channels' in graph_params:
             logging.error(f'\'exclude_channels\' must be a list of \'int\'s or a single \'int\', but {graph_params["exclude_channels"]} was given. Exiting')
             sys.exit(1)
     for c in exclude_ch:
-        for g in car_groups:
+        for g in reref_groups:
             if c in g:
                 g.remove(c)
 
@@ -270,8 +276,8 @@ else:
     bin_size = 10 # ms
 
 # keep only masked channels
-for g_idx in range(len(car_groups)):
-    car_groups[g_idx] = list(set(car_groups[g_idx]).intersection(set(ch_mask)))
+for g_idx in range(len(reref_groups)):
+    reref_groups[g_idx] = list(set(reref_groups[g_idx]).intersection(set(ch_mask)))
 
 ###############################################
 # Read in data
@@ -352,11 +358,8 @@ if filter_first:
     causal_str = 'causal' if causal else 'acausal'
     message = (f'Using {butter_order :d} order, '
                 f'{Wn} hz {filt_type} {causal_str} filter')
-    message += ' with CAR' if demean else ''
+    message += f' with {reref.upper()}' if reref is not None else ''
     logging.info(message)
-
-    if demean:
-        common_average_reference(all_data, car_groups)
 
     if causal:
         all_data = scipy.signal.sosfilt(sos,
@@ -365,6 +368,33 @@ if filter_first:
                                                          zi=zi)
     else:
         all_data = scipy.signal.sosfiltfilt(sos, all_data, axis=1)
+
+
+###############################################
+# Compute rereferencing parameters
+###############################################
+
+reref_params = np.zeros((tot_ch, tot_ch), dtype=np.float64)
+if reref == 'car':
+    ch_count = 0
+    for g, s in zip(reref_groups, reref_sizes):
+        reref_params[ch_count:ch_count+s, g] = 1./len(g)
+        ch_count += s
+
+elif reref == 'lrr':
+    ch_count = 0
+    for g, s in zip(reref_groups, reref_sizes):
+        for ch in range(ch_count, ch_count+s):
+            grp = np.setdiff1d(g, ch)
+            X = all_data[grp, :].T
+            y = all_data[ch, :].reshape(1, -1)
+            reref_params[ch, grp] = (y @ X) @ np.linalg.inv(X.T @ X) # sklearn is slow
+        ch_count += s
+
+reref_mat = -reref_params
+np.fill_diagonal(reref_mat, 1. + np.diag(reref_mat))
+
+all_data = reref_mat @ all_data
 
 
 ###############################################
@@ -411,6 +441,9 @@ r.xadd('normalization_parameters', {
     'means': means.tobytes(),
     'stds': stds.tobytes()})
 
+r.xadd('rereference_parameters', {
+    'channel_scaling': reref_params.tobytes()})
+
 output_dict = {
     'stream_info': stream_info,
     'thresh_mult': thresh_mult,
@@ -420,10 +453,11 @@ if filter_first:
     output_dict['butter_order'] = butter_order
     output_dict['butter_passband'] = Wn
     output_dict['samp_freq'] = samp_freq
-    output_dict['enable_CAR'] = demean
-    if demean:
-        output_dict['car_groups'] = car_groups
-    output_dict['bin_size'] = bin_size
+output_dict['rereference'] = reref
+if reref:
+    output_dict['reref_groups'] = reref_groups
+output_dict['bin_size'] = bin_size
+output_dict['rereference_parameters'] = reref_params.tolist()
 output_dict['thresholds'] = thresholds.reshape(-1).tolist()
 output_dict['means'] = means.tolist()
 output_dict['stds'] = stds.tolist()
