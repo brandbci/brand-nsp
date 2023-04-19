@@ -104,6 +104,8 @@ nodes:
       samp_freq: 30000
       chan_per_stream: *nsp_channels
       samp_per_stream: 30
+      chan_total: *total_channels
+      start_channel: 0
 
   - name: reReference
     nickname: reRef2
@@ -120,6 +122,8 @@ nodes:
       samp_freq: 30000
       chan_per_stream: *nsp_channels
       samp_per_stream: 30
+      chan_total: *total_channels
+      start_channel: 96
 
   - name: cerebusAdapter
     nickname: nsp_in_1

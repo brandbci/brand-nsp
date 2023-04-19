@@ -29,6 +29,8 @@ typedef struct graph_parameters_t {
     int samp_freq;
     int chan_per_stream;
     int samp_per_stream;
+    int chan_total;
+    int start_channel;
 } graph_parameters_t;
 
 // intialize support functions
@@ -256,6 +258,8 @@ int main (int argc_main, char **argv_main) {
 void initialize_coefficients(redisContext *c, double **coefs, graph_parameters_t *p)
 {
         int chan_per_stream = p->chan_per_stream;
+        int chan_total = p->chan_total;
+        int start_channel = p->start_channel;
         
         freeReplyObject(reply); 
         // Read new samples from redis stream
@@ -297,7 +301,7 @@ void initialize_coefficients(redisContext *c, double **coefs, graph_parameters_t
                 for (int jChan = 0; jChan < chan_per_stream; jChan++)
                 {
                     memcpy(&coef_temp,      
-                        &redis_coef_samples[(jChan + iChan*chan_per_stream) * sizeof(double)],
+                        &redis_coef_samples[((jChan+start_channel) + (iChan+start_channel)*chan_total) * sizeof(double)],
                         sizeof(double));
                     //coefs[iChan][jChan] = coef_temp;
                     if (iChan == jChan)
@@ -340,6 +344,8 @@ void initialize_parameters(redisContext *c, graph_parameters_t *p)
     p->samp_freq = get_parameter_int(supergraph_json, NICKNAME , "samp_freq");
     p->chan_per_stream = get_parameter_int(supergraph_json, NICKNAME , "chan_per_stream");
     p->samp_per_stream = get_parameter_int(supergraph_json, NICKNAME , "samp_per_stream");
+    p->chan_total = get_parameter_int(supergraph_json, NICKNAME , "chan_total");
+    p->start_channel = get_parameter_int(supergraph_json, NICKNAME , "start_channel");
 
     printf("[%s] Initialization complete. Reading from stream: %s. Writing to stream: %s\n", NICKNAME, p->input_stream_name, p->output_stream_name);
 
