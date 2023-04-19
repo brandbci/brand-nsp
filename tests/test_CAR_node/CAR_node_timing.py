@@ -26,7 +26,7 @@ logger.setLevel(logging.DEBUG)
 
 SAVE_DIR = '/samba/data/sim/2023-04-19/RawData'
 RDB_DIR = os.path.join(SAVE_DIR,'RDB')
-RDB_FILENAME = 'sim_230419_013.rdb'
+RDB_FILENAME = 'sim_230419_019.rdb'
 REDIS_IP = '127.0.0.1'
 REDIS_PORT = 18000
 
@@ -131,7 +131,7 @@ if b'reref_neural_1' in r.keys('*'):
                 entry_dec[key.decode()] = np.array(
                     timing.timespecs_to_timestamps(val)) 
             elif key.decode() == 'samples':
-                dat = np.frombuffer(val, dtype=np.int16).reshape(N_per_array, -1)
+                dat = np.frombuffer(val, dtype=np.float64).reshape(N_per_array, -1)
                 entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
         out[i] = entry_dec
     decoded_streams['reref_neural_1'] = out
@@ -149,7 +149,7 @@ if b'reref_neural_2' in r.keys('*'):
                 entry_dec[key.decode()] = np.array(
                     timing.timespecs_to_timestamps(val)) 
             elif key.decode() == 'samples':
-                dat = np.frombuffer(val, dtype=np.int16).reshape(N_per_array, -1)
+                dat = np.frombuffer(val, dtype=np.float64).reshape(N_per_array, -1)
                 entry_dec[key.decode()] = dat[0] if dat.size == 1 else dat
         out[i] = entry_dec
     decoded_streams['reref_neural_2'] = out

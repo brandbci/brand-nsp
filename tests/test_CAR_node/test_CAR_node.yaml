@@ -53,6 +53,7 @@ nodes:
       input_chan_per_stream: *nsp_channels # number of channels
       input_samp_per_stream: 30 # number of samples per channel per redis entry
       input_samp_freq: 30000
+      input_data_type: float64
       sync_key: sync
       time_key: ts
       sync_source_id: nsp_idx_1
@@ -82,6 +83,7 @@ nodes:
       input_chan_per_stream: *nsp_channels # number of channels
       input_samp_per_stream: 30 # number of samples per channel per redis entry
       input_samp_freq: 30000
+      input_data_type: float64
       sync_key: sync
       time_key: ts
       sync_source_id: nsp_idx_2

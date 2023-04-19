@@ -31,14 +31,11 @@ typedef struct graph_parameters_t {
     int samp_per_stream;
 } graph_parameters_t;
 
-
 // intialize support functions
 void initialize_signals();
 void initialize_parameters(redisContext *c, graph_parameters_t *p);
 void handler_SIGINT(int exitStatus);
 void shutdown_process();
-// void print_argv(int, char **, size_t *);
-// uint32_t parse_ip_str(char *ip_str);
 void initialize_coefficients(redisContext *c, double **coefs, graph_parameters_t *p);
 
 char NICKNAME[] = "reReference";
@@ -119,7 +116,7 @@ int main (int argc_main, char **argv_main) {
     argv[ind_udp_received_time]      = malloc(len);
     argv[ind_udp_received_time + 1]  = malloc(sizeof(struct timeval) * samp_per_stream);
     argv[ind_samples]                = malloc(len);
-    argv[ind_samples + 1]            = malloc(sizeof(int16_t) * samp_per_stream * chan_per_stream);
+    argv[ind_samples + 1]            = malloc(sizeof(double) * samp_per_stream * chan_per_stream);
 
     // populating the argv strings
 	argvlen[0] = sprintf(argv[0], "%s", "xadd"); // write the string "xadd" to the first position in argv, and put the length into argv
@@ -146,7 +143,7 @@ int main (int argc_main, char **argv_main) {
     int16_t sample_temp;
     double samples[chan_per_stream][samp_per_stream];
     double samples_reref[chan_per_stream][samp_per_stream];
-    double samples_ref_temp;
+    //double samples_ref_temp;
 
     while (1) {
 
@@ -194,6 +191,7 @@ int main (int argc_main, char **argv_main) {
             }  
         }
 
+        memset(samples_reref, 0, chan_per_stream * samp_per_stream * sizeof(double));
         // A linear algebra package for this matrix operation should be waaay more efficient than this
         //#pragma unroll 
         for(int n = 0; n < samp_per_stream; n++)
@@ -202,14 +200,17 @@ int main (int argc_main, char **argv_main) {
             for (int iChan = 0; iChan < chan_per_stream; iChan++)
             {
                 // Compute reference from weighted sum of all channels
-                samples_ref_temp = 0;
+                //samples_ref_temp = 0;
+                //samples_reref[iChan][n] = 0;
+
                 //#pragma unroll 
                 for (int jChan = 0; jChan < chan_per_stream; jChan++)
                 {
-                    samples_ref_temp += samples[jChan][n] * coefs[iChan][jChan];
+                    //samples_ref_temp += samples[jChan][n] * coefs[iChan][jChan];
+                    samples_reref[iChan][n] += samples[jChan][n] * coefs[iChan][jChan];
                 }
                 // Subtract reference from each channel
-                samples_reref[iChan][n] = samples[iChan][n] - samples_ref_temp;
+                //samples_reref[iChan][n] = samples[iChan][n] - samples_ref_temp;
             }
         }
 
@@ -223,10 +224,10 @@ int main (int argc_main, char **argv_main) {
                 sizeof(struct timespec));
             for (int iChan = 0; iChan < chan_per_stream; iChan++)
             {
-                sample_temp = (int16_t)samples_reref[iChan][n];
-                memcpy(&argv[ind_samples + 1][(n + iChan*samp_per_stream) * sizeof(int16_t)],      
-                    &sample_temp,
-                    sizeof(int16_t));
+                //sample_temp = samples_reref[iChan][n];
+                memcpy(&argv[ind_samples + 1][(n + iChan*samp_per_stream) * sizeof(double)],      
+                    &samples_reref[iChan][n],
+                    sizeof(double));
             }  
         }
 
@@ -234,7 +235,7 @@ int main (int argc_main, char **argv_main) {
         argvlen[ind_cerebus_timestamps + 1]      = sizeof(int32_t) * samp_per_stream;
         argvlen[ind_current_time + 1]            = sizeof(struct timespec) * samp_per_stream;
         argvlen[ind_udp_received_time + 1]       = sizeof(struct timeval) * samp_per_stream;
-        argvlen[ind_samples + 1]                 = sizeof(int16_t) * samp_per_stream * chan_per_stream;
+        argvlen[ind_samples + 1]                 = sizeof(double) * samp_per_stream * chan_per_stream;
 
         // Write to Redis
         freeReplyObject(redisCommandArgv(redis_context,  argc, (const char**) argv, argvlen));
@@ -269,11 +270,11 @@ void initialize_coefficients(redisContext *c, double **coefs, graph_parameters_t
             {
                 for (int jChan = 0; jChan < chan_per_stream; jChan++)
                 {
-                    coefs[iChan][jChan] = 1.0/chan_per_stream;
-                    // if (iChan == jChan)
-                    //     coefs[iChan][jChan] = 1.0 - 1.0/chan_per_stream;
-                    // else
-                    //     coefs[iChan][jChan] = -1.0/chan_per_stream; 
+                    //coefs[iChan][jChan] = 1.0/chan_per_stream;
+                    if (iChan == jChan)
+                        coefs[iChan][jChan] = 1.0 - 1.0/chan_per_stream;
+                    else
+                        coefs[iChan][jChan] = -1.0/chan_per_stream; 
                 }  
             }  
         }
@@ -298,11 +299,11 @@ void initialize_coefficients(redisContext *c, double **coefs, graph_parameters_t
                     memcpy(&coef_temp,      
                         &redis_coef_samples[(jChan + iChan*chan_per_stream) * sizeof(double)],
                         sizeof(double));
-                    coefs[iChan][jChan] = coef_temp;
-                    // if (iChan == jChan)
-                    //     coefs[iChan][jChan] = 1.0 - coef_temp;
-                    // else
-                    //     coefs[iChan][jChan] = -coef_temp; 
+                    //coefs[iChan][jChan] = coef_temp;
+                    if (iChan == jChan)
+                        coefs[iChan][jChan] = 1.0 - coef_temp;
+                    else
+                        coefs[iChan][jChan] = -coef_temp; 
                 }  
             }
         }
