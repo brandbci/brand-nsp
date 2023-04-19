@@ -24,9 +24,9 @@ logger.setLevel(logging.DEBUG)
 # %% 
 # Start Redis 
 
-SAVE_DIR = '/samba/data/sim/2023-04-14/RawData'
+SAVE_DIR = '/samba/data/sim/2023-04-19/RawData'
 RDB_DIR = os.path.join(SAVE_DIR,'RDB')
-RDB_FILENAME = 'sim_230414_011.rdb'
+RDB_FILENAME = 'sim_230419_013.rdb'
 REDIS_IP = '127.0.0.1'
 REDIS_PORT = 18000
 
@@ -238,7 +238,7 @@ nsp_1_arr = np.hstack(nsp_neural_1_df['samples'].values)
 reref_1_arr = np.hstack(reref_neural_1_df['samples'].values)
 
 sample_chs = [0, 1, 2, 3]
-T = 3000
+T = 3000  # 30*milliseconds
 t = np.arange(T)/30
 
 _, axs = plt.subplots(len(sample_chs), 2, sharex=True, sharey=True, figsize=(10, 10), facecolor='w')

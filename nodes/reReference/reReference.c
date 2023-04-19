@@ -25,6 +25,7 @@ typedef struct cerebus_packet_header_t {
 typedef struct graph_parameters_t {
     char input_stream_name[30];
     char output_stream_name[30];
+    char coefs_stream_name[30];
     int samp_freq;
     int chan_per_stream;
     int samp_per_stream;
@@ -36,8 +37,9 @@ void initialize_signals();
 void initialize_parameters(redisContext *c, graph_parameters_t *p);
 void handler_SIGINT(int exitStatus);
 void shutdown_process();
-void print_argv(int, char **, size_t *);
-uint32_t parse_ip_str(char *ip_str);
+// void print_argv(int, char **, size_t *);
+// uint32_t parse_ip_str(char *ip_str);
+void initialize_coefficients(redisContext *c, double **coefs, graph_parameters_t *p);
 
 char NICKNAME[] = "reReference";
 char SUPERGRAPH_ID[256];
@@ -46,6 +48,7 @@ int flag_SIGINT = 0;
 
 redisReply *reply;
 redisContext *redis_context;
+
 
 int main (int argc_main, char **argv_main) {
 
@@ -62,15 +65,11 @@ int main (int argc_main, char **argv_main) {
     int chan_per_stream = graph_parameters.chan_per_stream;
 
     // initialize re-referencing matrix
-    // TODO: read this from Redis
-    double coefs[chan_per_stream][chan_per_stream];
-    for (int iChan = 0; iChan < chan_per_stream; iChan++)
-    {
-        for (int jChan = 0; jChan < chan_per_stream; jChan++)
-        {
-            coefs[iChan][jChan] = 1.0/chan_per_stream;
-        }  
-    }  
+    double **coefs = (double**)malloc(chan_per_stream * sizeof(double*));
+    for (int i = 0; i < chan_per_stream; i++) {
+        coefs[i] = (double*)malloc(chan_per_stream * sizeof(double));
+    }
+    initialize_coefficients(redis_context, coefs, &graph_parameters);
 
     // argc    : The number of arguments in argv. The calculation is:
     //           int argc = 3 + 2 * 4;
@@ -140,9 +139,9 @@ int main (int argc_main, char **argv_main) {
     char last_redis_id [30];
     strcpy(last_redis_id, "$");
     char redis_string[256] = {0};
-    char *redis_data_nsp_timestamps;
-    char *redis_data_udp_timestamps;
-    char *redis_data_samples;
+    char *redis_data_nsp_timestamps; 
+    char *redis_data_udp_timestamps; 
+    char *redis_data_samples;        
 
     int16_t sample_temp;
     double samples[chan_per_stream][samp_per_stream];
@@ -173,8 +172,6 @@ int main (int argc_main, char **argv_main) {
         // Save timestamp/id of last redis sample
         strcpy(last_redis_id, reply->element[0]->element[1]->element[0]->element[0]->str);  
 
-        //printf("[%s] Last Redis ID: %s\n", NICKNAME, last_redis_id);
-
         redis_data_nsp_timestamps = reply->element[0]->element[1]->element[0]->element[1]->element[1]->str;
         redis_data_udp_timestamps = reply->element[0]->element[1]->element[0]->element[1]->element[5]->str;
         redis_data_samples        = reply->element[0]->element[1]->element[0]->element[1]->element[7]->str;
@@ -194,24 +191,19 @@ int main (int argc_main, char **argv_main) {
                     &redis_data_samples[(n + iChan*samp_per_stream) * sizeof(int16_t)],
                     sizeof(int16_t));
                 samples[iChan][n] = (double)sample_temp;
-
-                // memcpy(&samples[iChan][n],      
-                //     &redis_data_samples[(n + iChan*samp_per_stream) * sizeof(int16_t)],
-                //     sizeof(int16_t));
-                // memcpy(&argv[ind_samples + 1][(n + iChan*samp_per_stream) * sizeof(int16_t)],      
-                //     &redis_data_samples[(n + iChan*samp_per_stream) * sizeof(int16_t)],
-                //     sizeof(int16_t));
             }  
         }
 
-        // TODO: implement anything extra for LRR
         // A linear algebra package for this matrix operation should be waaay more efficient than this
+        //#pragma unroll 
         for(int n = 0; n < samp_per_stream; n++)
         {         
+            //#pragma unroll 
             for (int iChan = 0; iChan < chan_per_stream; iChan++)
             {
                 // Compute reference from weighted sum of all channels
                 samples_ref_temp = 0;
+                //#pragma unroll 
                 for (int jChan = 0; jChan < chan_per_stream; jChan++)
                 {
                     samples_ref_temp += samples[jChan][n] * coefs[iChan][jChan];
@@ -260,6 +252,64 @@ int main (int argc_main, char **argv_main) {
 // Initialization functions
 //------------------------------------
 
+void initialize_coefficients(redisContext *c, double **coefs, graph_parameters_t *p)
+{
+        int chan_per_stream = p->chan_per_stream;
+        
+        freeReplyObject(reply); 
+        // Read new samples from redis stream
+        //sprintf(redis_string, );
+        reply = redisCommand(c, "xrevrange %s + - COUNT 1", p->coefs_stream_name);
+        
+        if (reply == NULL || reply->type != REDIS_REPLY_ARRAY || reply->elements == 0)
+        {          
+            printf("[%s] Coefficients entry not found in Redis. Setting coefficients to compute mean of all channels.\n", NICKNAME);
+
+            for (int iChan = 0; iChan < chan_per_stream; iChan++)
+            {
+                for (int jChan = 0; jChan < chan_per_stream; jChan++)
+                {
+                    coefs[iChan][jChan] = 1.0/chan_per_stream;
+                    // if (iChan == jChan)
+                    //     coefs[iChan][jChan] = 1.0 - 1.0/chan_per_stream;
+                    // else
+                    //     coefs[iChan][jChan] = -1.0/chan_per_stream; 
+                }  
+            }  
+        }
+        else
+        {
+            printf("[%s] Coefficients entry found in Redis stream: %s.\n", NICKNAME, p->coefs_stream_name);
+
+            char *redis_coef_samples; 
+            double coef_temp;
+
+            // The xrevrange value is nested:
+            // dim0 [0+] The stream samples we're getting data from
+            // dim1 [0] The redis timestamp
+            // dim1 [1] The data content from the stream
+            // dim2 [1] Coefficient values
+            redis_coef_samples = reply->element[0]->element[1]->element[1]->str;
+
+            for(int iChan = 0; iChan < chan_per_stream; iChan++)
+            {         
+                for (int jChan = 0; jChan < chan_per_stream; jChan++)
+                {
+                    memcpy(&coef_temp,      
+                        &redis_coef_samples[(jChan + iChan*chan_per_stream) * sizeof(double)],
+                        sizeof(double));
+                    coefs[iChan][jChan] = coef_temp;
+                    // if (iChan == jChan)
+                    //     coefs[iChan][jChan] = 1.0 - coef_temp;
+                    // else
+                    //     coefs[iChan][jChan] = -coef_temp; 
+                }  
+            }
+        }
+
+    printf("[%s] Coefficients loaded.\n", NICKNAME);
+}
+
 void initialize_signals() {
 
     printf("[%s] Attempting to initialize signal handlers.\n", NICKNAME);
@@ -268,8 +318,6 @@ void initialize_signals() {
 
     printf("[%s] Signal handlers installed.\n", NICKNAME);
 }
-
-
 
 void initialize_parameters(redisContext *c, graph_parameters_t *p)
 {
@@ -287,6 +335,7 @@ void initialize_parameters(redisContext *c, graph_parameters_t *p)
     }
     strcpy(p->input_stream_name, get_parameter_string(supergraph_json, NICKNAME , "input_stream_name"));
     strcpy(p->output_stream_name, get_parameter_string(supergraph_json, NICKNAME , "output_stream_name"));
+    strcpy(p->coefs_stream_name, get_parameter_string(supergraph_json, NICKNAME , "coefs_stream_name"));
     p->samp_freq = get_parameter_int(supergraph_json, NICKNAME , "samp_freq");
     p->chan_per_stream = get_parameter_int(supergraph_json, NICKNAME , "chan_per_stream");
     p->samp_per_stream = get_parameter_int(supergraph_json, NICKNAME , "samp_per_stream");
@@ -322,74 +371,3 @@ void handler_SIGINT(int exitStatus) {
 
     shutdown_process();
 }
-
-//------------------------------------
-// Helper function
-//------------------------------------
-
-// // Quick and dirty function used for debugging purposes
-// void print_argv(int argc, char **argv, size_t *argvlen) {
-//     printf("argc = %d\n", argc);
-
-//     for (int i = 0; i < 5; i++){
-//         printf("%02d. (%s) - [%ld]\n", i, argv[i], argvlen[i]);
-//     }
-
-//     for (int i = 5; i < 7; i+=2){
-//         printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
-
-//         for (int j = 0; j < argvlen[i+1]; j+= sizeof(uint32_t)) {
-//             printf("%u,",  (uint32_t) argv[i+1][j]);
-//         }
-
-//         printf("]\n");
-//     }
-
-//     for (int i = 7; i < 11; i+=2){
-//         printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
-
-//         for (int j = 0; j < argvlen[i+1]; j+= sizeof(struct timeval)) {
-//             struct timeval time;
-//             memcpy(&time,&argv[i+1][j], sizeof(struct timeval));
-//             long milliseconds = time.tv_sec * 1000 + time.tv_usec / 1000;
-//             long microseconds = time.tv_usec % 1000;
-//             printf("%ld.%03ld,", milliseconds,microseconds);
-//         }
-
-//         printf("]\n");
-//     }
-
-
-//     for (int i = 11; i < argc; i+=2){
-//         printf("%02d. (%s) [%ld] - [", i, argv[i], argvlen[i+1]);
-
-//         for (int j = 0; j < argvlen[i+1]; j+= sizeof(uint16_t)) {
-//             printf("%u,",  (uint16_t) argv[i+1][j]);
-//         }
-
-//         printf("]\n");
-//     }
-
-// }
-
-// uint32_t parse_ip_str(char *ip_str) {
-//     unsigned char buf[sizeof(struct in_addr)];
-//     int domain, s;
-
-//     domain = AF_INET;
-//     s = inet_pton(domain, ip_str, buf);
-//     if (s <= 0) {
-//         if (s == 0) {
-//             fprintf(stderr, "[%s] Invalid IP address: '%s'\n", NICKNAME, ip_str);
-//         } else {
-//             perror("inet_pton");
-//         }
-//         fprintf(stderr, "[%s] Reverting to 255.255.255.255\n", NICKNAME);
-//         s = inet_pton(domain, "255.255.255.255", buf);
-//     }
-
-//     uint32_t ip_num;
-//     memcpy(&ip_num, buf, 4);
-
-//     return ip_num;
-// }
