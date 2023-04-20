@@ -24,13 +24,13 @@ logger.setLevel(logging.DEBUG)
 # %% 
 # Start Redis 
 
-SAVE_DIR = '/samba/data/sim/2023-04-19/RawData'
+SAVE_DIR = '/home/samnt/Projects/emory-cart/Data/sim/2023-04-19/RawData'
 RDB_DIR = os.path.join(SAVE_DIR,'RDB')
-RDB_FILENAME = 'sim_230419_019.rdb'
+RDB_FILENAME = 'sim_230419T2013_test_CAR_node.rdb'
 REDIS_IP = '127.0.0.1'
-REDIS_PORT = 18000
+REDIS_PORT = 37105
 
-redis_command = ['redis-server', '--bind', REDIS_IP, '--port', str(REDIS_PORT)]
+redis_command = ['/home/samnt/Projects/emory-cart/brand/bin/redis-server', '--bind', REDIS_IP, '--port', str(REDIS_PORT)]
 redis_command.append('--dbfilename')
 redis_command.append(RDB_FILENAME)
 redis_command.append('--dir')
@@ -154,6 +154,10 @@ if b'reref_neural_2' in r.keys('*'):
         out[i] = entry_dec
     decoded_streams['reref_neural_2'] = out
 
+if b'rereference_parameters' in r.keys('*'):
+    stream_data = r.xrange(b'rereference_parameters')
+    rereference_parameters = np.frombuffer(stream_data[-1][1][b'channel_scaling'], dtype=np.float64).reshape(N_per_array*2, -1)
+
 reref_neural_1_df = pd.DataFrame(decoded_streams['reref_neural_1'])
 reref_neural_2_df = pd.DataFrame(decoded_streams['reref_neural_2'])
 
@@ -236,6 +240,9 @@ binned_spikes_df.set_index('nsp_idx_1', inplace=True)
 
 nsp_1_arr = np.hstack(nsp_neural_1_df['samples'].values)
 reref_1_arr = np.hstack(reref_neural_1_df['samples'].values)
+reref_mat = -rereference_parameters
+np.fill_diagonal(reref_mat, 1. + np.diag(reref_mat))
+recomputed_reref_1_arr = reref_mat[:N_per_array, :N_per_array] @ reref_1_arr
 
 sample_chs = [0, 1, 2, 3]
 T = 3000  # 30*milliseconds
@@ -246,6 +253,7 @@ _, axs = plt.subplots(len(sample_chs), 2, sharex=True, sharey=True, figsize=(10,
 for i, ch in enumerate(sample_chs):
     axs[i, 0].plot(t, nsp_1_arr[ch, :T], color='b')
     axs[i, 1].plot(t, reref_1_arr[ch, :T], color='g')
+    axs[i, 1].plot(t, recomputed_reref_1_arr[ch, :T], color='y')
     axs[i, 0].set_ylabel('ch {}'.format(ch))
 
 axs[-1, 0].set_xlabel('Time [ms]')

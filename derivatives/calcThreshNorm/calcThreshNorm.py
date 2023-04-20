@@ -457,10 +457,10 @@ output_dict['rereference'] = reref
 if reref:
     output_dict['reref_groups'] = reref_groups
 output_dict['bin_size'] = bin_size
-output_dict['rereference_parameters'] = reref_params.tolist()
 output_dict['thresholds'] = thresholds.reshape(-1).tolist()
 output_dict['means'] = means.tolist()
 output_dict['stds'] = stds.tolist()
+output_dict['rereference_parameters'] = reref_params.tolist()
 
 save_filename = save_filename + '.yaml'
 save_filepath = os.path.join(save_filepath, 'thresh_norm')
