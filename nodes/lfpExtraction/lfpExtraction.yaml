@@ -1,0 +1,15 @@
+
+RedisStreams:
+  Inputs:
+      ###
+  Outputs:
+    band_power:
+      enable_nwb:           False
+      type_nwb:             TimeSeries
+      samples:
+        chan_per_stream:    $input_chan_per_stream
+        samp_per_stream:    $input_samp_per_stream
+        sample_type:        float32
+        nwb:
+          unit:             (0.25uV)^2
+          description:      LFP power within a frequency band
