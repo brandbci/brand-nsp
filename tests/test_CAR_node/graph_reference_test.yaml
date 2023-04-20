@@ -39,9 +39,9 @@ nodes:
       time_key: ts
       sync_source_id: nsp_idx_1
       nsp_channels: *nsp_channels
-      thresholds_stream: thresholds
-      thresholds_ch_range: [0,96]
-      ch_mask_stream: z_mask_stream
+      # thresholds_stream: thresholds
+      # thresholds_ch_range: [0,96]
+      # ch_mask_stream: z_mask_stream
 
   - name: thresholdExtraction
     nickname: thresh_cross_2
@@ -71,9 +71,9 @@ nodes:
       time_key: ts
       sync_source_id: nsp_idx_2
       nsp_channels: *nsp_channels
-      thresholds_stream: thresholds
-      thresholds_ch_range: [96,192]
-      ch_mask_stream: z_mask_stream
+      # thresholds_stream: thresholds
+      # thresholds_ch_range: [96,192]
+      # ch_mask_stream: z_mask_stream
 
   - name: cerebusAdapter
     nickname: nsp_in_1
