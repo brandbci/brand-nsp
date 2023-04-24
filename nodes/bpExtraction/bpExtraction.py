@@ -450,7 +450,7 @@ def common_average_reference(data, group_list):
 if __name__ == '__main__':
     gc.disable()  # disable garbage collection
 
-    lfp_ext = bpExtraction()
-    lfp_ext.run()
+    bp_ext = bpExtraction()
+    bp_ext.run()
 
     gc.collect()  # run garbage collection
