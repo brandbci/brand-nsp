@@ -391,8 +391,7 @@ elif reref == 'lrr':
             reref_params[ch, grp] = (y @ X) @ np.linalg.inv(X.T @ X) # sklearn is slow
         ch_count += s
 
-reref_mat = -reref_params
-np.fill_diagonal(reref_mat, 1. + np.diag(reref_mat))
+reref_mat = np.eye(tot_ch) - reref_params
 
 all_data = reref_mat @ all_data
 
