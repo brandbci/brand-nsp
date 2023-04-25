@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# lfpExtraction.py
+# bpExtraction.py
 # Yahia Ali
 import gc
 import json
@@ -15,7 +15,7 @@ import scipy.signal
 from brand import BRANDNode
 
 
-class lfpExtraction(BRANDNode):
+class bpExtraction(BRANDNode):
 
     def __init__(self):
         super().__init__()
@@ -450,7 +450,7 @@ def common_average_reference(data, group_list):
 if __name__ == '__main__':
     gc.disable()  # disable garbage collection
 
-    lfp_ext = lfpExtraction()
-    lfp_ext.run()
+    bp_ext = bpExtraction()
+    bp_ext.run()
 
     gc.collect()  # run garbage collection
