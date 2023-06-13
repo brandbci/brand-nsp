@@ -12,4 +12,4 @@ RedisStreams:
         sample_type:        float32
         nwb:
           unit:             (0.25uV)^2
-          description:      LFP power within a frequency band
+          description:      Power within a frequency band

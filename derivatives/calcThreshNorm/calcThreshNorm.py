@@ -146,6 +146,15 @@ if 'thresh_mult' in graph_params:
 else:
     thresh_mult = -4.5
 
+# whether to compute normalization parameters for band power features
+if 'norm_bp' in graph_params:
+    norm_bp = graph_params['norm_bp']
+    if not isinstance(norm_bp, bool):
+        logging.error(f'\'norm_bp\' must be of type \'bool\', but it was {norm_bp}. Exiting')
+        sys.exit(1)
+else:
+    norm_bp = False
+
 if 'ch_mask_stream' in graph_params:
     ch_mask_entry = r.xrevrange(graph_params['ch_mask_stream'], '+', '-', count=1)
     if ch_mask_entry:
@@ -423,6 +432,10 @@ def bin_data(data, bin_width):
 # accumulate in 1 ms bins, then in bin_size ms bins
 binned = bin_data(crossings.T, int(samp_freq/1e3)) > 0
 binned = bin_data(binned, bin_size)
+
+if norm_bp:
+    binned_bp = bin_data(all_data[:, 1:].T ** 2, int(samp_freq * bin_size / 1e3)) / (samp_freq/1e3) # equivalent to bpExtraction node, divide by 30
+    binned = np.hstack((binned, binned_bp))
 
 # calculate means and STDs
 means = binned.mean(axis=0)
