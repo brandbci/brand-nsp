@@ -230,12 +230,18 @@ if 'rereference' in graph_params:
             logging.error(f'\'rereference\' must be \'CAR\' or \'LRR\', but it was {reref}. Exiting')
             sys.exit(1)
         reref = reref.lower()
+elif 'enable_CAR' in graph_params:
+    if not isinstance(graph_params['enable_CAR'], bool):
+        logging.error(f'\'enable_CAR\' must be of type \'bool\', but it was {graph_params["enable_CAR"]}. Exiting')
+        sys.exit(1)
+    reref = 'car' if graph_params['enable_CAR'] else None
 else:
     reref = None
 
 # list of lists of re-reference groupings
-if reref is not None and 'reref_group_sizes' in graph_params:
-    reref_sizes = graph_params['reref_group_sizes']
+if reref is not None and ('reref_group_sizes' in graph_params or 'CAR_group_sizes' in graph_params):
+    size_key = 'reref_group_sizes' if 'reref_group_sizes' in graph_params else 'CAR_group_sizes'
+    reref_sizes = graph_params[size_key]
     if not isinstance(reref_sizes, list):
         if isinstance(reref_sizes, int):
             reref_sizes = []
@@ -243,13 +249,13 @@ if reref is not None and 'reref_group_sizes' in graph_params:
             for s in stream_info:
                 ch_count = s['structure']['chan_per_stream']
                 while ch_count > 0:
-                    reref_sizes.append(min([graph_params['reref_group_sizes'], ch_count]))
-                    ch_count -= graph_params['reref_group_sizes']
+                    reref_sizes.append(min([graph_params[size_key], ch_count]))
+                    ch_count -= graph_params[size_key]
     reref_groups = []
     ch_count = 0
     for g in reref_sizes:
         if not isinstance(g, int):
-            logging.error(f'\'reref_group_sizes\' must be a list of \'int\'s or a single \'int\', but {graph_params["reref_group_sizes"]} was given. Exiting')
+            logging.error(f'\'reref_group_sizes\' must be a list of \'int\'s or a single \'int\', but {graph_params[size_key]} was given. Exiting')
             sys.exit(1)
         reref_groups.append(np.arange(ch_count, ch_count+g).tolist())
         ch_count += g
