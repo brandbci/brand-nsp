@@ -246,7 +246,7 @@ elif 'enable_CAR' in graph_params:
         sys.exit(1)
     reref = 'car' if graph_params['enable_CAR'] else None
 else:
-    reref = None
+    reref = 'car'
 
 # list of lists of re-reference groupings
 if reref is not None and ('reref_group_sizes' in graph_params or 'CAR_group_sizes' in graph_params):
