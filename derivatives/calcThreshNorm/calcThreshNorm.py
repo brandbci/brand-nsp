@@ -7,6 +7,7 @@ then stores both in a file and Redis
 
 import json
 import logging
+import numba
 import numbers
 import numpy as np
 import os
@@ -219,6 +220,15 @@ if 'samp_freq' in graph_params:
 else:
     samp_freq = 30000
 
+# decimation
+if 'decimate' in graph_params:
+    decimate = graph_params['decimate']
+    if not isinstance(decimate, int) or decimate < 1:
+        logging.error(f'\'decimate\' must be a positive integer, but it was {decimate}. Exiting')
+        sys.exit(1)
+else:
+    decimate = 1
+
 # re-reference type
 if 'rereference' in graph_params:
     reref = graph_params['rereference']
@@ -389,6 +399,12 @@ if filter_first:
 # Compute rereferencing parameters
 ###############################################
 
+@numba.jit('float64[:,:](float64[:,:], float64[:,:])', nopython=True)
+def rereference_data(data, reref_params):
+    reref_mat = np.eye(reref_params.shape[0]) - reref_params
+    reref_data = reref_mat @ data
+    return reref_data
+
 reref_params = np.zeros((tot_ch, tot_ch), dtype=np.float64)
 if reref == 'car':
     ch_count = 0
@@ -401,14 +417,12 @@ elif reref == 'lrr':
     for g, s in zip(reref_groups, reref_sizes):
         for ch in range(ch_count, ch_count+s):
             grp = np.setdiff1d(g, ch)
-            X = all_data[grp, :].T
-            y = all_data[ch, :].reshape(1, -1)
+            X = all_data[grp, ::decimate].T
+            y = all_data[ch, ::decimate].reshape(1, -1)
             reref_params[ch, grp] = (y @ X) @ np.linalg.inv(X.T @ X) # sklearn is slow
         ch_count += s
 
-reref_mat = np.eye(tot_ch) - reref_params
-
-all_data = reref_mat @ all_data
+all_data = rereference_data(all_data, reref_params)
 
 
 ###############################################
