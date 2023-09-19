@@ -28,10 +28,10 @@ CFILES = $(ROOT)/lib/c/brand/brand.c \
 
 TARGET=$(PROJECT).bin
 
-all: cerebusAdapter
+all: $(PROJECT)
 
-cerebusAdapter: cerebusAdapter.c
-	$(CC) $(CFLAGS+) $(CINCLUDE) $(LINKS) cerebusAdapter.c $(CFILES) $(LDPATH) -o $(TARGET) $(LDFLAGS)
+$(PROJECT): $(PROJECT).c
+	$(CC) $(CFLAGS+) $(CINCLUDE) $(LINKS) $(PROJECT).c $(CFILES) $(LDPATH) -o $(TARGET) $(LDFLAGS)
 
 clean:
 	$(RM) $(TARGET)
