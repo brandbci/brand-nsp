@@ -11,6 +11,7 @@ parameters:
 
 # node-specific parameters
 nodes:
+
   # - name: bin_multiple
   #   nickname: bin_multiple
   #   machine: brand
@@ -193,13 +194,13 @@ nodes:
   #     samp_per_stream: [30]
 
 
+derivatives:
 
-
-  # - saveRDB:
-  #     name: saveRDB.py
-  #     module: ../brand-modules/brand-emory
-  #     autorun: True
-  #     parameters:
-  #       flush_streams_before_save: [nsp_neural]
-  #       flush_rdb_after_save: True
-  #       flush_rdb_except_streams: [thresholds,normalization_parameters,normalize_exit_parameters,z_mask_stream]
+  - saveRDB:
+      name: saveRDB.py
+      module: ../brand-modules/brand-emory
+      autorun: True
+      parameters:
+        flush_streams_before_save: [nsp_neural]
+        flush_rdb_after_save: True
+        flush_rdb_except_streams: [thresholds,normalization_parameters,normalize_exit_parameters,z_mask_stream]

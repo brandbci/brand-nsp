@@ -86,6 +86,12 @@ class ThresholdExtraction(BRANDNode):
         else:
             self.dtype = np.int16
 
+        # optional datatype
+        if 'timestamp_data_type' in self.parameters:
+            self.tdtype = self.parameters['timestamp_data_type']
+        else:
+            self.tdtype = np.uint32
+
         # list of lists of common-average reference groupings
         if self.demean and 'CAR_group_sizes' in self.parameters:
             car_sizes = self.parameters['CAR_group_sizes']
@@ -317,7 +323,7 @@ class ThresholdExtraction(BRANDNode):
                 np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
                 (n_channels, samp_per_stream))
             read_times[i_start:i_end] = np.frombuffer(
-                entry_data[b'timestamps'], np.uint32)
+                entry_data[b'timestamps'], self.tdtype)
             i_start = i_end
 
         if self.causal:
@@ -428,9 +434,9 @@ class ThresholdExtraction(BRANDNode):
             (self.n_channels, self.acausal_filter_lag + n_samp),
             dtype=np.float32)
         crossings = np.zeros_like(data_buffer)
-        samp_times = np.zeros(n_samp, dtype=np.uint32)
+        samp_times = np.zeros(n_samp, dtype=self.tdtype)
         buffer_len = rev_buffer.shape[1]
-        samp_times_buffer = np.zeros(buffer_len, dtype=np.uint32)
+        samp_times_buffer = np.zeros(buffer_len, dtype=self.tdtype)
         buffer_fill = 0  # how many samples have been read into the buffer
 
         # initialize stream entries
@@ -465,7 +471,7 @@ class ThresholdExtraction(BRANDNode):
                                       dtype=self.dtype),
                         (self.n_channels, samp_per_stream))
                     samp_times[indStart:indEnd] = np.frombuffer(
-                        entry_data[b'timestamps'], np.uint32)
+                        entry_data[b'timestamps'], self.tdtype)
                     indStart = indEnd
 
                 # update key to be the entry number of last item in list
