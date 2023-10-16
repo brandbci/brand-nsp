@@ -45,6 +45,7 @@ void handler_SIGINT(int exitStatus);
 void shutdown_process();
 void print_argv(int, char **, size_t *);
 uint32_t parse_ip_str(char *ip_str);
+double diff_timespec(const struct timespec *time1, const struct timespec *time0);
 
 char NICKNAME[] = "cerebusAdapter";
 char SUPERGRAPH_ID[256];
@@ -184,7 +185,11 @@ int main (int argc_main, char **argv_main) {
     message_header.msg_control    = msg_control_buffer;
     message_header.msg_controllen = 2000;
 
+    struct timespec spike_err_time;
+    clock_gettime(CLOCK_MONOTONIC, &spike_err_time);
+    uint32_t num_spike_pkts = 0;
     struct timespec current_time;
+    clock_gettime(CLOCK_MONOTONIC, &current_time);
     struct timeval udp_received_time;
     struct cmsghdr *cmsg_header; // Used for getting the time UDP packet was received
 
@@ -229,6 +234,18 @@ int main (int argc_main, char **argv_main) {
 
             // for each stream, check if there's the relevant packet type being pulled in 
             for (int iStream = 0; iStream < numStreams; iStream++){
+
+                // check that we are not getting spike packets, dlen is 0 for Cerebus heartbeat
+                if ((cerebus_packet_header->type == (uint8_t) 0) && (cerebus_packet_header->dlen > (uint8_t) 0)) {
+                    num_spike_pkts++;
+
+                    // write warnings once a second
+                    if (diff_timespec(&current_time, &spike_err_time) >= 1.0) {
+                        printf("[%s] received %d spike packets!\n",NICKNAME,num_spike_pkts);
+                        memcpy(&spike_err_time, &current_time, sizeof(struct timespec));
+                    }
+                }
+
                 if (cerebus_packet_header->type == graph_parameters.packet_type[iStream]) {
                     
                     // This gets the current system time
@@ -477,4 +494,9 @@ uint32_t parse_ip_str(char *ip_str) {
     memcpy(&ip_num, buf, 4);
 
     return ip_num;
+}
+
+double diff_timespec(const struct timespec *time1, const struct timespec *time0) {
+  return (time1->tv_sec - time0->tv_sec)
+      + (time1->tv_nsec - time0->tv_nsec) / 1000000000.0;
 }
