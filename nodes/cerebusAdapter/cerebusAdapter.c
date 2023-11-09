@@ -39,7 +39,7 @@ typedef struct graph_parameters_t {
 
 // intialize support functions
 void initialize_signals();
-int initialize_socket(char *broadcast_ip, int broadcast_port, char *broadcast_device);
+int  initialize_socket(char *broadcast_ip, int broadcast_port, char *broadcast_device);
 void initialize_parameters(redisContext *c, graph_parameters_t *p);
 void handler_SIGINT(int exitStatus);
 void shutdown_process();

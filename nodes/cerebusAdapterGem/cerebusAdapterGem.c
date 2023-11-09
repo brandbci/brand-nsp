@@ -30,7 +30,9 @@ typedef struct cerebus_packet_header_t {
 // this allows for only a max streams based on constant above
 // change that constant if you want
 typedef struct graph_parameters_t {
+    char broadcast_ip[20];
     int broadcast_port;
+    char broadcast_device[20];
     int num_streams;
     char **stream_names;
     int *samp_freq;
@@ -41,15 +43,14 @@ typedef struct graph_parameters_t {
 
 
 // intialize support functions
-void initialize_redis(char *yaml_path);
 void initialize_signals();
-int  initialize_socket(int broadcast_port);
+int  initialize_socket(char *broadcast_ip, int broadcast_port, char *broadcast_device);
 void initialize_parameters(redisContext *c, graph_parameters_t *p);
-void parameter_array_parser(int is_char, char *in_string, void *array_ind);
-void initialize_realtime(char *yaml_path);
 void handler_SIGINT(int exitStatus);
 void shutdown_process();
 void print_argv(int, char **, size_t *);
+uint32_t parse_ip_str(char *ip_str);
+double diff_timespec(const struct timespec *time1, const struct timespec *time0);
 
 char NICKNAME[] = "cerebusAdapter";
 char SUPERGRAPH_ID[256];
@@ -71,7 +72,8 @@ int main (int argc_main, char **argv_main) {
     // graph_parameters_t graph_parameters = (graph_parameters_t) {51002, 3, {"cb_gen_1"}, {30000}, {6}, {96}, {30}};
     int numStreams = graph_parameters.num_streams; //will use this a lot, so pull it out
 
-    int udp_fd = initialize_socket(graph_parameters.broadcast_port);
+    int udp_fd = initialize_socket(graph_parameters.broadcast_ip, graph_parameters.broadcast_port,
+        graph_parameters.broadcast_device);
 
 
     // argc    : The number of arguments in argv. The calculation is:
@@ -204,11 +206,17 @@ int main (int argc_main, char **argv_main) {
     // output stream so we can track calculations through the system.
     unsigned long tracking_id = 0;
 
+    struct timespec spike_err_time;
+    clock_gettime(CLOCK_MONOTONIC, &spike_err_time);
+    uint32_t num_spike_pkts = 0;
+
     double current_timedstamp;
     struct timespec current_time_spec;
+    clock_gettime(CLOCK_MONOTONIC, &current_time_spec);
 
     double udp_recv_timedstamp;
     struct timeval udp_recv_time_val;
+    
     struct cmsghdr *cmsg_header; // Used for getting the time UDP packet was received
 
     // timestamp of each write to redis (and temp vars for unpacking from clock_gettime)
@@ -241,6 +249,7 @@ int main (int argc_main, char **argv_main) {
         
         int cb_packet_ind = 0; 
         while (cb_packet_ind <= udp_packet_size) {
+
             // First check: can we safely read the remaining payload content. We should
             // have at least sizeof(cerebus_packet_header_t) bytes left to read
             // If not something went wrong and we go fetch the next packet
@@ -255,16 +264,31 @@ int main (int argc_main, char **argv_main) {
             
             // for each stream, check if there's the relevant packet type being pulled in 
             for (int iStream = 0; iStream < numStreams; iStream++){
+
+                // check that we are not getting spike packets, dlen is 0 for Cerebus heartbeat
+                if ((cerebus_packet_header->type == (uint8_t) 0) && (cerebus_packet_header->dlen > (uint8_t) 0)) {
+                    num_spike_pkts++;
+
+                    // write warnings once a second
+                    if (diff_timespec(&current_time_spec, &spike_err_time) >= 1.0) {
+                        printf("[%s] received %d spike packets!\n",NICKNAME,num_spike_pkts);
+                        memcpy(&spike_err_time, &current_time_spec, sizeof(struct timespec));
+                    }
+                }
+
                 if (cerebus_packet_header->type == graph_parameters.packet_type[iStream]) {
+                    
                     // This gets the current system time
                     clock_gettime(CLOCK_MONOTONIC, &current_time_spec);
                     current_timedstamp = (double)current_time_spec.tv_sec + (double)current_time_spec.tv_nsec / BILLION;
                     
                     // Copy the timestamp information into argvPtr
                     memcpy( &argvPtr[iStream][ind_cerebus_timestamps + 1][n[iStream] * sizeof(uint64_t)],    &cerebus_packet_header->time,      sizeof(uint64_t));
-                    memcpy( &argvPtr[iStream][ind_current_timestamps + 1][n[iStream] * sizeof(double)],      &current_timedstamp,               sizeof(double));
-                    memcpy( &argvPtr[iStream][ind_udp_recv_timestamps + 1][n[iStream] * sizeof(double)],     &udp_recv_timedstamp,              sizeof(double));
-    
+                    // memcpy( &argvPtr[iStream][ind_current_timestamps + 1][n[iStream] * sizeof(double)],      &current_timedstamp,               sizeof(double));
+                    // memcpy( &argvPtr[iStream][ind_udp_recv_timestamps + 1][n[iStream] * sizeof(double)],     &udp_recv_timedstamp,              sizeof(double));
+                    memcpy( &argvPtr[iStream][ind_current_timestamps + 1][n[iStream] * sizeof(struct timeval)],      &current_time_spec,               sizeof(struct timeval));
+                    memcpy( &argvPtr[iStream][ind_udp_recv_timestamps + 1][n[iStream] * sizeof(struct timeval)],     &udp_recv_time_val,              sizeof(struct timeval));
+
                     // The index where the data starts in the UDP payload
                     int cb_data_ind  = cb_packet_ind + sizeof(cerebus_packet_header_t);
     
@@ -279,10 +303,10 @@ int main (int argc_main, char **argv_main) {
                 if (n[iStream] == graph_parameters.samp_per_stream[iStream]) {
                     // Update the length (in bytes) of each data field
                     argvlen[iStream][ind_cerebus_timestamps + 1]      = sizeof(uint64_t) * n[iStream];
-                    argvlen[iStream][ind_current_timestamps + 1]      = sizeof(double) * n[iStream];
-                    argvlen[iStream][ind_udp_recv_timestamps + 1]     = sizeof(double) * n[iStream];
+                    argvlen[iStream][ind_current_timestamps + 1]      = sizeof(struct timeval) * n[iStream];
+                    argvlen[iStream][ind_udp_recv_timestamps + 1]     = sizeof(struct timeval) * n[iStream];
                     argvlen[iStream][ind_tracking_id + 1]             = sizeof(unsigned long);
-                    argvlen[iStream][ind_write_timestamp + 1]         = sizeof(double);
+                    argvlen[iStream][ind_write_timestamp + 1]         = sizeof(struct timeval);
                     argvlen[iStream][ind_samples + 1]                 = sizeof(int16_t) * n[iStream] * graph_parameters.chan_per_stream[iStream];
 
                     // Use a unique tracking_id for data to flow through the graph with.
@@ -290,20 +314,21 @@ int main (int argc_main, char **argv_main) {
                     memcpy( &argvPtr[iStream][ind_tracking_id + 1][0], &tracking_id, sizeof(unsigned long));
 
                     // Get the system time immediately before writing to redis.
-                    clock_gettime(CLOCK_REALTIME, &write_timestamp_spec);
+                    clock_gettime(CLOCK_MONOTONIC, &write_timestamp_spec);
                     // TODO: why does the division lose precision? I'd have thought the numbers are within range.
                     write_timestamp = (double)write_timestamp_spec.tv_sec + (double)write_timestamp_spec.tv_nsec / BILLION;
-                    memcpy( &argvPtr[iStream][ind_write_timestamp + 1][0], &write_timestamp, sizeof(double));
+                    memcpy( &argvPtr[iStream][ind_write_timestamp + 1][0], &write_timestamp_spec, sizeof(struct timeval));
 
                     // Everything we've done is just to get to this one line. Whew!
                     freeReplyObject(redisCommandArgv(c,  argc, (const char**) argvPtr[iStream], argvlen[iStream]));
+
                     // Since we've pushed our data to Redis, restart the data collection
                     n[iStream] = 0;
                 }
             }
 
             // Regardless of what type of packet we got, advance to the next cerebus packet start location
-            cb_packet_ind += sizeof(cerebus_packet_header_t) + cerebus_packet_header->dlen * 4;
+            cb_packet_ind = cb_packet_ind + sizeof(cerebus_packet_header_t) + (4 * cerebus_packet_header->dlen);
         }
     }
 
@@ -331,7 +356,7 @@ void initialize_signals() {
     printf("[%s] Signal handlers installed.\n", NICKNAME);
 }
 
-int initialize_socket(int broadcast_port) {
+int initialize_socket(char *broadcast_ip, int broadcast_port, char *broadcast_device) {
 
     // Create a UDP socket
    	int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP ); 
@@ -362,19 +387,32 @@ int initialize_socket(int broadcast_port) {
         exit(EXIT_FAILURE); 
     }
 
+    // Load the broadcast IP
+    char broadcast_ip_string[INET_ADDRSTRLEN];
+    strcpy(broadcast_ip_string, broadcast_ip);
+    uint32_t broadcast_ip_int = parse_ip_str(broadcast_ip_string);
+    printf("[%s] Listening on port %d\n", NICKNAME, broadcast_port);
 
-    printf("[%s] I will be listening on port %d\n", NICKNAME, broadcast_port);
+    // Bind socket to a specific interface
+    char interface[20] = {0};
+    strcpy(interface, broadcast_device);
+    printf("[%s] Binding socket to device: %s\n", NICKNAME, interface);
 
+    int so = setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, &interface,
+        sizeof(interface));
+    if (so < 0) {
+        perror("[cerebusAdapter] interface binding error");
+    }
 
     // Now configure the socket
     struct sockaddr_in addr;
     memset(&addr,0,sizeof(addr));
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY); //htonl(INADDR_BROADCAST);
+    addr.sin_addr.s_addr = broadcast_ip_int;
     addr.sin_port        = htons(broadcast_port);
 
      if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-        perror("[cerebusAdapter] socket binding failure\n"); 
+        perror("[cerebusAdapter] Socket binding failure");  
         exit(EXIT_FAILURE); 
      }
 
@@ -396,7 +434,9 @@ void initialize_parameters(redisContext *c, graph_parameters_t *p)
         exit(1);
     }
 
+    strcpy(p->broadcast_ip, get_parameter_string(supergraph_json, NICKNAME , "broadcast_ip"));
     p->broadcast_port = get_parameter_int(supergraph_json, NICKNAME , "broadcast_port");
+    strcpy(p->broadcast_device, get_parameter_string(supergraph_json, NICKNAME , "broadcast_device"));
     get_parameter_list_string(supergraph_json, NICKNAME, "stream_names", &p->stream_names, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "samp_freq", &p->samp_freq, &p->num_streams);
     get_parameter_list_int(supergraph_json, NICKNAME, "packet_type", &p->packet_type, &p->num_streams);
@@ -472,4 +512,31 @@ void print_argv(int argc, char **argv, size_t *argvlen) {
         printf("]\n");
     }
 
+}
+
+uint32_t parse_ip_str(char *ip_str) {
+    unsigned char buf[sizeof(struct in_addr)];
+    int domain, s;
+
+    domain = AF_INET;
+    s = inet_pton(domain, ip_str, buf);
+    if (s <= 0) {
+        if (s == 0) {
+            fprintf(stderr, "[%s] Invalid IP address: '%s'\n", NICKNAME, ip_str);
+        } else {
+            perror("inet_pton");
+        }
+        fprintf(stderr, "[%s] Reverting to 255.255.255.255\n", NICKNAME);
+        s = inet_pton(domain, "255.255.255.255", buf);
+    }
+
+    uint32_t ip_num;
+    memcpy(&ip_num, buf, 4);
+
+    return ip_num;
+}
+
+double diff_timespec(const struct timespec *time1, const struct timespec *time0) {
+  return (time1->tv_sec - time0->tv_sec)
+      + (time1->tv_nsec - time0->tv_nsec) / 1000000000.0;
 }
