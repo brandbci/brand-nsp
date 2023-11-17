@@ -140,11 +140,11 @@ int main (int argc_main, char **argv_main) {
         
         // allocating memory for current_time [data]
         argvPtr[ii][ind_current_timestamps]                   = malloc(len);
-        argvPtr[ii][ind_current_timestamps + 1]               = malloc(sizeof(double) * samp_per_stream);
+        argvPtr[ii][ind_current_timestamps + 1]               = malloc(sizeof(struct timeval) * samp_per_stream);
 
         // allocating memory for udp_received_time [data]
         argvPtr[ii][ind_udp_recv_timestamps]              = malloc(len);
-        argvPtr[ii][ind_udp_recv_timestamps + 1]          = malloc(sizeof(double) * samp_per_stream);
+        argvPtr[ii][ind_udp_recv_timestamps + 1]          = malloc(sizeof(struct timeval) * samp_per_stream);
 
         // allocating memory for tracking_id [data]
         argvPtr[ii][ind_tracking_id]                    = malloc(len);
