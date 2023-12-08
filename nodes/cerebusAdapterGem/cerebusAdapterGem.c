@@ -281,6 +281,10 @@ int main (int argc_main, char **argv_main) {
                     // This gets the current system time
                     clock_gettime(CLOCK_MONOTONIC, &current_time_spec);
                     current_timedstamp = (double)current_time_spec.tv_sec + (double)current_time_spec.tv_nsec / BILLION;
+
+                    // if (n[iStream] == 0 && cb_time % graph_parameters.samp_per_stream[iStream] != 0) {
+                    //     // skip this cerebus packet
+                    //     int cb_data_ind = cb_packet_ind + sizeof(cerebus_packet_header_t);
                     
                     // Copy the timestamp information into argvPtr
                     memcpy( &argvPtr[iStream][ind_cerebus_timestamps + 1][n[iStream] * sizeof(uint64_t)],    &cerebus_packet_header->time,      sizeof(uint64_t));
@@ -293,10 +297,10 @@ int main (int argc_main, char **argv_main) {
                     int cb_data_ind  = cb_packet_ind + sizeof(cerebus_packet_header_t);
     
                     // Copy each payload entry directly to the argvPtr. dlen contains the number of 4 bytes of payload
-                    // for(int iChan = 0; iChan < cerebus_packet_header->dlen * 2; iChan++) {
-                    //     memcpy(&(argvPtr[iStream][ind_samples + 1][(n[iStream] + iChan*graph_parameters.samp_per_stream[iStream]) * sizeof(int16_t)]), &udp_packet_payload[cb_data_ind + 2*iChan], sizeof(int16_t));
-                    // }
-                    memcpy(&(argvPtr[iStream][ind_samples + 1][n[iStream] * cerebus_packet_header->dlen * 4]), &udp_packet_payload[cb_data_ind], cerebus_packet_header->dlen * 4);
+                    for(int iChan = 0; iChan < cerebus_packet_header->dlen * 2; iChan++) {
+                        memcpy(&(argvPtr[iStream][ind_samples + 1][(n[iStream] + iChan*graph_parameters.samp_per_stream[iStream]) * sizeof(int16_t)]), &udp_packet_payload[cb_data_ind + 2*iChan], sizeof(int16_t));
+                    }
+                    // memcpy(&(argvPtr[iStream][ind_samples + 1][n[iStream] * cerebus_packet_header->dlen * 4]), &udp_packet_payload[cb_data_ind], cerebus_packet_header->dlen * 4);
                     n[iStream]++;
                 }
 
