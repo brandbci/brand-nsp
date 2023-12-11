@@ -42,7 +42,23 @@ class ThresholdExtraction(BRANDNode):
         # number of samples per channel per redis entry
         self.samp_per_stream = self.parameters['input_samp_per_stream']
         # number of channels
-        self.n_channels = self.parameters['input_chan_per_stream']
+        self.n_channels_total = self.parameters['input_chan_per_stream']
+
+        # which channels to use
+        if 'neural_ch_range' in self.parameters:
+            if len(self.parameters['neural_ch_range']) == 2:
+                self.n_range = np.arange(
+                    self.parameters['neural_ch_range'][0],
+                    self.parameters['neural_ch_range'][1])
+            else:
+                logging.warning(
+                    '\'neural_ch_range\' parameter should be length 2,'
+                    ' attempting to use all neural channels')
+                self.n_range = np.arange(0, self.n_channels_total)
+        else:
+            self.n_range = np.arange(0, self.n_channels_total)                               
+        self.n_range = self.n_range.astype(int)
+        self.n_channels = self.n_range.shape[0]     
 
         # whether to remove coincident spikes
         self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else None
@@ -350,7 +366,7 @@ class ThresholdExtraction(BRANDNode):
                 thresh_yaml = yaml.safe_load(f)
             if 'thresholds' in thresh_yaml:
                 if tf_chans is None:
-                    if len(thresh_yaml['thresholds']) == self.n_channels:
+                    if len(thresh_yaml['thresholds']) == self.n_channels_total:
                         logging.info(
                             f'Loaded thresholds from {thresholds_file}')
                         return np.array(thresh_yaml['thresholds']).reshape(
@@ -359,7 +375,7 @@ class ThresholdExtraction(BRANDNode):
                         raise ValueError(
                             f'Number of thresholds in {thresholds_file} '
                             f'({len(thresh_yaml["thresholds"])}) does not '
-                            f'equal n_channels parameter {(self.n_channels)}')
+                            f'equal n_channels parameter {(self.n_channels_total)}')
                 # if all of our requested channels are in the available range
                 # of channels
                 elif (set(tf_chans)
@@ -390,14 +406,14 @@ class ThresholdExtraction(BRANDNode):
             thresholds = np.frombuffer(entry[0][1][b'thresholds'],
                                        dtype=np.float64)
             if th_chans is None:
-                if len(thresholds) == self.n_channels:
+                if len(thresholds) == self.n_channels_total:
                     logging.info(f'Loaded thresholds from the {stream} stream')
                     return thresholds.reshape(-1, 1)
                 else:
                     raise ValueError(
                         f'Number of thresholds in the {stream} stream '
                         f'({len(thresholds)}) does not equal n_channels '
-                        f'parameter {(self.n_channels)}')
+                        f'parameter {(self.n_channels_total)}')
             # if all of our requested channels are in the available range of
             # channels
             elif (set(th_chans)
@@ -469,7 +485,7 @@ class ThresholdExtraction(BRANDNode):
                     data_buffer[:, indStart:indEnd] = np.reshape(
                         np.frombuffer(entry_data[b'samples'],
                                       dtype=self.dtype),
-                        (self.n_channels, samp_per_stream))
+                        (self.n_channels_total, samp_per_stream))[self.n_range,:]
                     samp_times[indStart:indEnd] = np.frombuffer(
                         entry_data[b'timestamps'], self.tdtype)
                     indStart = indEnd
