@@ -17,6 +17,13 @@ class CentralsInterface(BRANDNode):
     def __init__(self):
         super().__init__()
 
+        # __file__ doesn't work with cython, so need to specify path
+        self.path_to_this_node = os.path.abspath(
+            os.path.join(
+                '..', 'brand-modules', 'brand-nsp', 'nodes', 'centrals_interface'
+            )
+        )
+
         self.parameters.setdefault('metadata_stream', 'block_metadata')
 
         # base save path outside participant name, etc...
@@ -51,7 +58,7 @@ class CentralsInterface(BRANDNode):
 
         # get path to MATLAB script we want to run
         matlab_filename = 'start_recording_nsx.m'
-        m_path = os.path.join(os.path.dirname(__file__), matlab_filename)
+        m_path = os.path.join(self.path_to_this_node, matlab_filename)
 
         # variables to change in the specified MATLAB script
         matlab_parameter_dict = {}
@@ -120,7 +127,7 @@ class CentralsInterface(BRANDNode):
     def terminate(self, sig, frame):
         if self.recording_started:
             matlab_filename = 'stop_recording_nsx.m'
-            filepath = os.path.join(os.path.dirname(__file__), matlab_filename)
+            filepath = os.path.join(self.path_to_this_node, matlab_filename)
 
             # Compose matlab script
             matlab_script_str = self.load_matlab_script_as_text(filepath)
