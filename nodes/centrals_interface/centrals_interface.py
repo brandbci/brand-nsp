@@ -31,26 +31,31 @@ class CentralsInterface(BRANDNode):
 
         # read block metadata
         self.metadata_stream = self.parameters['metadata_stream']
-        metadata = self.r.xread({self.metadata_stream: '$'}, block=0)
-        metadata = metadata[0][1][0][1]
+        # need to periodically scan for block_metadata
+        while True:
+            metadata = self.r.xrevrange(self.metadata_stream, count=1)
+            if len(metadata) > 0:
+                break
+            time.sleep(0.05)
+        metadata = metadata[0][1]
 
         self.participant = metadata[b'participant'].decode('utf-8')
         self.session_name = metadata[b'session_name'].decode('utf-8')
         
         rdbfilename = self.r.config_get('dbfilename')['dbfilename']
         self.filepath = rdbfilename.replace('.rdb', '')
-        self.filepath = os.path.join(
+        self.filepath = '\\'.join((
             self.save_path,
             self.participant,
             self.session_name,
             PC1_MATLAB_DEFAULT_NSP_DIR_NAME,
-            self.filepath)
+            self.filepath))
 
         self.result_stream_dict = {
             PC1_MATLAB_RESULT_STREAM: '0'
         }
         
-        self.redis_timeout = 100
+        self.redis_timeout = 5000
 
         self.recording_started = False
 
@@ -66,6 +71,7 @@ class CentralsInterface(BRANDNode):
 
         # Compose matlab script
         matlab_script_str = self.load_matlab_script_as_text(m_path, matlab_parameter_dict)
+        logging.info(f'Running: {matlab_script_str}')
         current_timestamp_str = str(time.time())
         self.r.xadd(
             PC1_MATLAB_COMMAND_STREAM,
@@ -81,8 +87,7 @@ class CentralsInterface(BRANDNode):
         xread_receive = self.r.xread(self.result_stream_dict, block=self.redis_timeout, count=1)
 
         if len(xread_receive) == 0:
-            logging.error("No reply received from PC1 MATLAB adapter, stopping graph")
-            self.r.xadd('supervisor_ipstream', {'commands': 'stopGraph'})
+            logging.warning("No reply received from PC1 MATLAB adapter")
 
         else:
             entry_id, entry_data = xread_receive[0][1][0]
@@ -121,7 +126,7 @@ class CentralsInterface(BRANDNode):
                 line = f"{key} = {value};"
                 parameter_def_lines.append(line)
 
-            text = " ".join(parameter_def_lines) + " " + matlab_script_content
+            text = " ".join(parameter_def_lines) + " " + text
         return text
     
     def terminate(self, sig, frame):
