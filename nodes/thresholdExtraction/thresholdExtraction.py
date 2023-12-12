@@ -337,7 +337,7 @@ class ThresholdExtraction(BRANDNode):
             i_end = i_start + samp_per_stream
             read_arr[:, i_start:i_end] = np.reshape(
                 np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
-                (n_channels, samp_per_stream))
+                (self.n_channels_total, samp_per_stream))[self.n_range,:]
             read_times[i_start:i_end] = np.frombuffer(
                 entry_data[b'timestamps'], self.tdtype)
             i_start = i_end
