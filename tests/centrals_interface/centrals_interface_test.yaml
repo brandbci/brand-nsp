@@ -1,0 +1,21 @@
+metadata:
+  participant_id: test
+  graph_name: centralsInterfaceTest
+  description: BRAND test graph, centrals_interface
+  participant_file: ../Data/t0/t0.yaml
+
+nodes:
+  - name: block_metadata
+    nickname: block_metadata
+    module: ../brand-modules/brand-emory
+    run_priority: 99
+    parameters:
+      log: INFO
+
+  - name: centrals_interface
+    nickname: centrals_interface
+    module: ../brand-modules/brand-nsp
+    machine: gpc
+    parameters:
+      log: INFO
+      save_path: C:\Users\snason2\projects\Data
