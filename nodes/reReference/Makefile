@@ -28,10 +28,10 @@ CFILES = $(ROOT)/lib/c/brand/brand.c \
 
 TARGET=$(PROJECT).bin
 
-all: reReference
+all: $(PROJECT)
 
-reReference: reReference.c
-	$(CC) $(CFLAGS+) $(CINCLUDE) $(LINKS) reReference.c $(CFILES) $(LDPATH) -o $(TARGET) $(LDFLAGS)
+$(PROJECT): $(PROJECT).c
+	$(CC) $(CFLAGS+) $(CINCLUDE) $(LINKS) $(PROJECT).c $(CFILES) $(LDPATH) -o $(TARGET) $(LDFLAGS)
 
 clean:
 	$(RM) $(TARGET)
