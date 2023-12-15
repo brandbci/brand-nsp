@@ -58,7 +58,7 @@ class ThresholdExtraction(BRANDNode):
         else:
             self.n_range = np.arange(0, self.n_channels_total)                               
         self.n_range = self.n_range.astype(int)
-        self.n_channels = self.n_range.shape[0]     
+        self.n_channels = self.n_range.shape[0]
 
         # whether to remove coincident spikes
         self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else None
@@ -107,6 +107,12 @@ class ThresholdExtraction(BRANDNode):
             self.tdtype = self.parameters['timestamp_data_type']
         else:
             self.tdtype = np.uint32
+        
+        # use tracking id instead of NSP timestamp
+        if 'use_tracking_id' in self.parameters:
+            self.use_tracking_id = self.parameters['use_tracking_id']
+        else:
+            self.use_tracking_id = False
 
         # list of lists of common-average reference groupings
         if self.demean and 'CAR_group_sizes' in self.parameters:
@@ -330,7 +336,7 @@ class ThresholdExtraction(BRANDNode):
                             dtype=np.float32)
         filt_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
                             dtype=np.float32)
-        read_times = np.empty((thresh_cal_len * samp_per_stream))
+        # read_times = np.empty((thresh_cal_len * samp_per_stream))
 
         i_start = 0
         for _, entry_data in entries:  # put it all into an array
@@ -338,8 +344,8 @@ class ThresholdExtraction(BRANDNode):
             read_arr[:, i_start:i_end] = np.reshape(
                 np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
                 (self.n_channels_total, samp_per_stream))[self.n_range,:]
-            read_times[i_start:i_end] = np.frombuffer(
-                entry_data[b'timestamps'], self.tdtype)
+            # read_times[i_start:i_end] = np.frombuffer(
+            #     entry_data[b'timestamps'], self.tdtype)
             i_start = i_end
 
         if self.causal:
@@ -486,8 +492,12 @@ class ThresholdExtraction(BRANDNode):
                         np.frombuffer(entry_data[b'samples'],
                                       dtype=self.dtype),
                         (self.n_channels_total, samp_per_stream))[self.n_range,:]
-                    samp_times[indStart:indEnd] = np.frombuffer(
-                        entry_data[b'timestamps'], self.tdtype)
+                    if self.use_tracking_id:
+                        samp_times[indStart:indEnd] = np.repeat(np.frombuffer(
+                            entry_data[b'tracking_id'], self.tdtype), samp_per_stream)
+                    else:
+                        samp_times[indStart:indEnd] = np.frombuffer(
+                            entry_data[b'timestamps'], self.tdtype)
                     indStart = indEnd
 
                 # update key to be the entry number of last item in list
