@@ -73,7 +73,10 @@ class reReference(BRANDNode):
         self.neural_data_reref = np.zeros((self.chan_per_stream, self.samp_per_stream), dtype=self.output_dtype)
         self.coefs = np.zeros((self.chan_per_stream, self.chan_per_stream), dtype=self.output_dtype)
 
-        self.n_split = 16
+        if 'n_split' in self.parameters:
+            self.n_split = self.parameters['n_split'] 
+        else:
+            self.n_split = 16
 
         self.initialize_coefficients()
 
@@ -146,7 +149,7 @@ class reReference(BRANDNode):
             self.neural_data[:] = np.frombuffer(self.entry_data[self.neural_data_field.encode()], 
                                                 dtype=self.input_dtype).reshape((self.chan_per_stream, self.samp_per_stream)).astype(self.output_dtype)
 
-            self.t_start = time.monotonic_ns()
+            # self.t_start = time.monotonic_ns()
 
             # self.neural_data_reref[:] = self.coefs @ self.neural_data.astype(self.output_dtype)
             # self.neural_data_reref[:] = np.matmul(self.coefs, self.neural_data)
@@ -161,10 +164,10 @@ class reReference(BRANDNode):
             # for ch in range(self.chan_per_stream):
             #     self.neural_data_reref[ch,:] = np.matmul(self.coefs[ch,:], self.neural_data)
 
-            self.t_end = time.monotonic_ns()
+            # self.t_end = time.monotonic_ns()
 
-            if self.t_end - self.t_start > 900000:
-                logging.info(f"Matrix operation duration (ns): {self.t_end - self.t_start}")
+            # if self.t_end - self.t_start > 900000:
+            #     logging.info(f"Matrix operation duration (ns): {self.t_end - self.t_start}")
 
             # copy data to output dict
             for key in self.entry_data.keys():
