@@ -174,8 +174,6 @@ int main (int argc_main, char **argv_main) {
         argvlen[ii][ind_samples]                 = sprintf(argvPtr[ii][ind_samples], "%s", "samples");
 
     }
-
-    printf("[%s] Entering loop...\n", NICKNAME);
     
     // How many samples have we copied 
     int n[numStreams];  
@@ -200,6 +198,10 @@ int main (int argc_main, char **argv_main) {
     message_header.msg_iovlen     = 1;
     message_header.msg_control    = msg_control_buffer;
     message_header.msg_controllen = 65535;
+
+    sleep(1);
+
+    printf("[%s] Entering loop...\n", NICKNAME);
 
     // tracking id (incremental so as to be unique per redis write). nodes take the
     // tracking_id of the entry in their input stream and put it in the entry in their
@@ -229,6 +231,7 @@ int main (int argc_main, char **argv_main) {
 
         // We use recvmsg because we want to know when the kernel received the UDP packet
         int udp_packet_size = recvmsg(udp_fd, &message_header, 0);
+        
         // The timer has timed out or there was an error with the recvmsg() call
         if (udp_packet_size  <= 0) {
             printf("[%s] timer has timed out or there was an error with the recvmsg() call!\n",NICKNAME);
