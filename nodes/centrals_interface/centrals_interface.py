@@ -4,9 +4,9 @@ import os
 import signal
 import sys
 import time
+from dotenv import load_dotenv
 
 from brand import BRANDNode
-
 
 SUPERVISOR_COMMANDS_STREAM = 'supervisor_ipstream'
 PC1_MATLAB_COMMAND_STREAM = 'pc1_matlab_command'
@@ -26,8 +26,17 @@ class CentralsInterface(BRANDNode):
 
         self.parameters.setdefault('metadata_stream', 'block_metadata')
 
-        # base save path outside participant name, etc...
-        self.save_path = self.parameters['save_path']
+        # Get Window user from environment file created during startup
+        self.env_file_path = self.parameters['env_file_path']
+        load_dotenv(self.env_file_path)
+        pc1_user = os.environ.get('PC1_USER')
+
+        # convert to correct path format if domain name is included for user
+        if '\\' in pc1_user:
+            pc1_user = pc1_user.split('\\')[1] + '.' + pc1_user.split('\\')[0]
+
+        # Build Windows save path
+        self.save_path = 'C:\\Users\\' + pc1_user + '\\projects\\Data' 
 
         # read block metadata
         self.metadata_stream = self.parameters['metadata_stream']
