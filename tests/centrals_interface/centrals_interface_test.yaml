@@ -1,0 +1,32 @@
+metadata:
+  participant_id: test
+  graph_name: centralsInterfaceTest
+  description: BRAND test graph, centrals_interface
+  participant_file: ../Data/t0/t0.yaml
+
+nodes:
+  - name: block_metadata
+    nickname: block_metadata
+    module: ../brand-modules/brand-emory
+    run_priority: 99
+    parameters:
+      log: INFO
+
+  - name: centrals_interface
+    nickname: centrals_interface
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    machine: gpc
+    parameters:
+      log: INFO
+      env_file_path: /samba/tmp/BRAND/environment.sh
+
+derivatives:
+  - saveRDB:
+      name: saveRDB.py
+      module: ../brand-modules/brand-emory
+      autorun: True
+      parameters:
+        flush_streams_before_save: []
+        flush_rdb_after_save: True
+        flush_rdb_except_streams: [thresholds,normalization_parameters,normalize_exit_parameters,z_mask_stream]
