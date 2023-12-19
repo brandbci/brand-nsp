@@ -34,13 +34,41 @@ class bpExtraction(BRANDNode):
         # number of samples per channel per redis entry
         self.samp_per_stream = self.parameters['input_samp_per_stream']
         # number of channels
-        self.n_channels = self.parameters['input_chan_per_stream']
+        self.n_channels_total = self.parameters['input_chan_per_stream']
+
+        # which channels to use
+        if 'neural_ch_range' in self.parameters:
+            if len(self.parameters['neural_ch_range']) == 2:
+                self.n_range = np.arange(
+                    self.parameters['neural_ch_range'][0],
+                    self.parameters['neural_ch_range'][1])
+            else:
+                logging.warning(
+                    '\'neural_ch_range\' parameter should be length 2,'
+                    ' attempting to use all neural channels')
+                self.n_range = np.arange(0, self.n_channels_total)
+        else:
+            self.n_range = np.arange(0, self.n_channels_total)                               
+        self.n_range = self.n_range.astype(int)
+        self.n_channels = self.n_range.shape[0]
 
         # optional datatype
         if 'input_data_type' in self.parameters:
             self.dtype = self.parameters['input_data_type']
         else:
             self.dtype = np.int16
+
+        # optional datatype
+        if 'timestamp_data_type' in self.parameters:
+            self.tdtype = self.parameters['timestamp_data_type']
+        else:
+            self.tdtype = np.uint32
+
+        # use tracking id instead of NSP timestamp
+        if 'use_tracking_id' in self.parameters:
+            self.use_tracking_id = self.parameters['use_tracking_id']
+        else:
+            self.use_tracking_id = False
 
         # list of lists of common-average reference groupings
         if self.demean and 'CAR_group_sizes' in self.parameters:
@@ -233,9 +261,9 @@ class bpExtraction(BRANDNode):
         rev_buffer = np.zeros(
             (self.n_channels, self.acausal_filter_lag + n_samp),
             dtype=np.float32)
-        samp_times = np.zeros(n_samp, dtype=np.uint32)
+        samp_times = np.zeros(n_samp, dtype=self.tdtype)
         buffer_len = rev_buffer.shape[1]
-        samp_times_buffer = np.zeros(buffer_len, dtype=np.uint32)
+        samp_times_buffer = np.zeros(buffer_len, dtype=self.tdtype)
         buffer_fill = 0  # how many samples have been read into the buffer
 
         # initialize stream entries
@@ -265,9 +293,13 @@ class bpExtraction(BRANDNode):
                     data_buffer[:, indStart:indEnd] = np.reshape(
                         np.frombuffer(entry_data[b'samples'],
                                       dtype=self.dtype),
-                        (self.n_channels, samp_per_stream))
-                    samp_times[indStart:indEnd] = np.frombuffer(
-                        entry_data[b'timestamps'], np.uint32)
+                        (self.n_channels_total, samp_per_stream))[self.n_range,:]
+                    if self.use_tracking_id:
+                        samp_times[indStart:indEnd] = np.repeat(np.frombuffer(
+                            entry_data[b'tracking_id'], self.tdtype), samp_per_stream)
+                    else:
+                        samp_times[indStart:indEnd] = np.frombuffer(
+                            entry_data[b'timestamps'], self.tdtype)
                     indStart = indEnd
 
                 # update key to be the entry number of last item in list

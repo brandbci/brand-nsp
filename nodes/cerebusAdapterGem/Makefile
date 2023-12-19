@@ -1,4 +1,4 @@
-PROJECT=reReference
+PROJECT=cerebusAdapterGem
 
 ifneq ($(CONDA_DEFAULT_ENV),rt)
 $(error real-time conda env (rt) not active)

@@ -7,7 +7,7 @@ RedisStreams:
       enable_nwb:           False
       type_nwb:             TimeSeries
       samples:
-        chan_per_stream:    $input_chan_per_stream
+        chan_per_stream:    $n_channels
         samp_per_stream:    1
         sample_type:        float32
         nwb:
