@@ -42,7 +42,23 @@ class ThresholdExtraction(BRANDNode):
         # number of samples per channel per redis entry
         self.samp_per_stream = self.parameters['input_samp_per_stream']
         # number of channels
-        self.n_channels = self.parameters['input_chan_per_stream']
+        self.n_channels_total = self.parameters['input_chan_per_stream']
+
+        # which channels to use
+        if 'neural_ch_range' in self.parameters:
+            if len(self.parameters['neural_ch_range']) == 2:
+                self.n_range = np.arange(
+                    self.parameters['neural_ch_range'][0],
+                    self.parameters['neural_ch_range'][1])
+            else:
+                logging.warning(
+                    '\'neural_ch_range\' parameter should be length 2,'
+                    ' attempting to use all neural channels')
+                self.n_range = np.arange(0, self.n_channels_total)
+        else:
+            self.n_range = np.arange(0, self.n_channels_total)                               
+        self.n_range = self.n_range.astype(int)
+        self.n_channels = self.n_range.shape[0]
 
         # whether to remove coincident spikes
         self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else None
@@ -85,6 +101,18 @@ class ThresholdExtraction(BRANDNode):
             self.dtype = self.parameters['input_data_type']
         else:
             self.dtype = np.int16
+
+        # optional datatype
+        if 'timestamp_data_type' in self.parameters:
+            self.tdtype = self.parameters['timestamp_data_type']
+        else:
+            self.tdtype = np.uint32
+        
+        # use tracking id instead of NSP timestamp
+        if 'use_tracking_id' in self.parameters:
+            self.use_tracking_id = self.parameters['use_tracking_id']
+        else:
+            self.use_tracking_id = False
 
         # list of lists of common-average reference groupings
         if self.demean and 'CAR_group_sizes' in self.parameters:
@@ -308,16 +336,16 @@ class ThresholdExtraction(BRANDNode):
                             dtype=np.float32)
         filt_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
                             dtype=np.float32)
-        read_times = np.empty((thresh_cal_len * samp_per_stream))
+        # read_times = np.empty((thresh_cal_len * samp_per_stream))
 
         i_start = 0
         for _, entry_data in entries:  # put it all into an array
             i_end = i_start + samp_per_stream
             read_arr[:, i_start:i_end] = np.reshape(
                 np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
-                (n_channels, samp_per_stream))
-            read_times[i_start:i_end] = np.frombuffer(
-                entry_data[b'timestamps'], np.uint32)
+                (self.n_channels_total, samp_per_stream))[self.n_range,:]
+            # read_times[i_start:i_end] = np.frombuffer(
+            #     entry_data[b'timestamps'], self.tdtype)
             i_start = i_end
 
         if self.causal:
@@ -344,7 +372,7 @@ class ThresholdExtraction(BRANDNode):
                 thresh_yaml = yaml.safe_load(f)
             if 'thresholds' in thresh_yaml:
                 if tf_chans is None:
-                    if len(thresh_yaml['thresholds']) == self.n_channels:
+                    if len(thresh_yaml['thresholds']) == self.n_channels_total:
                         logging.info(
                             f'Loaded thresholds from {thresholds_file}')
                         return np.array(thresh_yaml['thresholds']).reshape(
@@ -353,7 +381,7 @@ class ThresholdExtraction(BRANDNode):
                         raise ValueError(
                             f'Number of thresholds in {thresholds_file} '
                             f'({len(thresh_yaml["thresholds"])}) does not '
-                            f'equal n_channels parameter {(self.n_channels)}')
+                            f'equal n_channels parameter {(self.n_channels_total)}')
                 # if all of our requested channels are in the available range
                 # of channels
                 elif (set(tf_chans)
@@ -384,14 +412,14 @@ class ThresholdExtraction(BRANDNode):
             thresholds = np.frombuffer(entry[0][1][b'thresholds'],
                                        dtype=np.float64)
             if th_chans is None:
-                if len(thresholds) == self.n_channels:
+                if len(thresholds) == self.n_channels_total:
                     logging.info(f'Loaded thresholds from the {stream} stream')
                     return thresholds.reshape(-1, 1)
                 else:
                     raise ValueError(
                         f'Number of thresholds in the {stream} stream '
                         f'({len(thresholds)}) does not equal n_channels '
-                        f'parameter {(self.n_channels)}')
+                        f'parameter {(self.n_channels_total)}')
             # if all of our requested channels are in the available range of
             # channels
             elif (set(th_chans)
@@ -428,9 +456,9 @@ class ThresholdExtraction(BRANDNode):
             (self.n_channels, self.acausal_filter_lag + n_samp),
             dtype=np.float32)
         crossings = np.zeros_like(data_buffer)
-        samp_times = np.zeros(n_samp, dtype=np.uint32)
+        samp_times = np.zeros(n_samp, dtype=self.tdtype)
         buffer_len = rev_buffer.shape[1]
-        samp_times_buffer = np.zeros(buffer_len, dtype=np.uint32)
+        samp_times_buffer = np.zeros(buffer_len, dtype=self.tdtype)
         buffer_fill = 0  # how many samples have been read into the buffer
 
         # initialize stream entries
@@ -463,9 +491,13 @@ class ThresholdExtraction(BRANDNode):
                     data_buffer[:, indStart:indEnd] = np.reshape(
                         np.frombuffer(entry_data[b'samples'],
                                       dtype=self.dtype),
-                        (self.n_channels, samp_per_stream))
-                    samp_times[indStart:indEnd] = np.frombuffer(
-                        entry_data[b'timestamps'], np.uint32)
+                        (self.n_channels_total, samp_per_stream))[self.n_range,:]
+                    if self.use_tracking_id:
+                        samp_times[indStart:indEnd] = np.repeat(np.frombuffer(
+                            entry_data[b'tracking_id'], self.tdtype), samp_per_stream)
+                    else:
+                        samp_times[indStart:indEnd] = np.frombuffer(
+                            entry_data[b'timestamps'], self.tdtype)
                     indStart = indEnd
 
                 # update key to be the entry number of last item in list
