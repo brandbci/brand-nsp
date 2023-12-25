@@ -12,6 +12,8 @@ import numpy as np
 import signal
 import sys
 
+from brand.redis import RedisLoggingHandler
+
 from redis import ConnectionError, Redis
 
 ###############################################
@@ -59,6 +61,8 @@ except ConnectionError as e:
 except:
     logging.error('Failed to connect to Redis. Exiting.')
     sys.exit(1)
+
+logging.getLogger().addHandler(RedisLoggingHandler(r, NAME))
 
 logging.info('Redis connection successful.')
 

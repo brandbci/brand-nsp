@@ -17,7 +17,7 @@ import signal
 import sys
 import yaml
 
-from brand.redis import xread_count
+from brand.redis import xread_count, RedisLoggingHandler
 
 from redis import ConnectionError, Redis
 
@@ -88,6 +88,8 @@ except ConnectionError as e:
 except:
     logging.error('Failed to connect to Redis. Exiting.')
     sys.exit(1)
+
+logging.getLogger().addHandler(RedisLoggingHandler(r, NAME))
 
 logging.info('Redis connection successful.')
 
