@@ -168,8 +168,8 @@ else:
     unshuffle_matrix = np.zeros((n_chan,n_chan), dtype=np.float64)
     for i in range(n_chan):
         electrode_mapping = np.array(unshuffle_dict['electrode_mapping'])
-        for chan_out in range(i):
-            chan_in = electrode_mapping[chan_out]-1
+        for chan_in in range(i):
+            chan_out = electrode_mapping[chan_in]-1
             unshuffle_matrix[chan_out, chan_in] = 1
 
 # the RMS multiplier to use to calculate voltage thresholds
