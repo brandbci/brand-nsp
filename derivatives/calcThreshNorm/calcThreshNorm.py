@@ -148,8 +148,9 @@ for s in stream_info:
 if 'unshuffle_file' in graph_params:
     unshuffle_file = graph_params['unshuffle_file']
     try: 
-        unshuffle_dict = json.load(unshuffle_file)
-        logging.warning(f'Array index unshuffle dict loaded from file: {unshuffle_file}')
+        with open(unshuffle_file, 'r') as f:
+            unshuffle_dict = json.load(f)
+        logging.info(f'Array index unshuffle dict loaded from file: {unshuffle_file}')
         unshuffle = True
     except:
         logging.warning(f'Array index unshuffle dict could not be loaded from file defined by \'unshuffle_file\': {unshuffle_file}. Will assume channels are ordered correctly')
@@ -158,9 +159,9 @@ else:
     logging.warning(f'No array index unshuffle dict provided by field \'unshuffle_file\'. Will assume channels are ordered correctly')
     unshuffle = False
 
-# if no unshuffling, use identifity matrices
-if unshuffle == False or unshuffle_idxs is None:
-    unshuffle_matrices = []
+unshuffle_matrices = []
+# if no unshuffling, use identity matrices
+if unshuffle == False:
     for c in ch_per_stream:
         mat = np.eye(c)
         unshuffle_matrices.append(mat)
@@ -168,11 +169,12 @@ if unshuffle == False or unshuffle_idxs is None:
 else:
     for i, c in enumerate(ch_per_stream):
         stream_electrode_mapping = np.array(unshuffle_dict['electrode_mapping'][i])
-        mat = np.zeros(c)
+        mat = np.zeros((c,c))
         for chan_out in range(c):
-            for chan_in in range(c):
-                mat[chan_out, chan_in] = 1
+            chan_in = stream_electrode_mapping[chan_out]-1
+            mat[chan_out, chan_in] = 1
         unshuffle_matrices.append(mat)
+        # logging.info(f'matrix {i}: {mat}')
 
 # the RMS multiplier to use to calculate voltage thresholds
 if 'thresh_mult' in graph_params:
@@ -359,7 +361,7 @@ all_data = np.empty((np.sum(ch_per_stream), n_samples), dtype=np.float64)
 logging.info(f'Computing thresholds from {n_samples} samples')
 
 tot_ch = 0
-for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
+for s, n_entries, n_ch, mat in zip(stream_info, num_entries, ch_per_stream, unshuffle_matrices):
     this_ch = np.arange(tot_ch, tot_ch+n_ch)
 
     reply = xread_count(r,
@@ -378,7 +380,7 @@ for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
             np.frombuffer(entry_data[s['key'].encode()], dtype=s['structure']['sample_type']),
             (n_ch, s['structure']['samp_per_stream']))
         i_start = i_end
-    all_data[this_ch, :] = np.float64(stream_data[:, :n_samples])
+    all_data[this_ch, :] = np.float64(mat@stream_data[:, :n_samples])
     tot_ch += n_ch
 
 
