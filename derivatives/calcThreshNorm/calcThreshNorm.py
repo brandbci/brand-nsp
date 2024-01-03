@@ -159,22 +159,18 @@ else:
     logging.warning(f'No array index unshuffle dict provided by field \'unshuffle_file\'. Will assume channels are ordered correctly')
     unshuffle = False
 
-unshuffle_matrices = []
-# if no unshuffling, use identity matrices
+# if no unshuffling, use identity matrix
 if unshuffle == False:
-    for c in ch_per_stream:
-        mat = np.eye(c)
-        unshuffle_matrices.append(mat)
+    unshuffle_matrix = np.eye(np.sum(ch_per_stream), dtype=np.float64)
 # if unshuffling, build unshuffling matrices
 else:
-    for i, c in enumerate(ch_per_stream):
-        stream_electrode_mapping = np.array(unshuffle_dict['electrode_mapping'][i])
-        mat = np.zeros((c,c))
-        for chan_out in range(c):
-            chan_in = stream_electrode_mapping[chan_out]-1
-            mat[chan_out, chan_in] = 1
-        unshuffle_matrices.append(mat)
-        # logging.info(f'matrix {i}: {mat}')
+    n_chan = np.sum(ch_per_stream)
+    unshuffle_matrix = np.zeros((n_chan,n_chan), dtype=np.float64)
+    for i in range(n_chan):
+        electrode_mapping = np.array(unshuffle_dict['electrode_mapping'])
+        for chan_out in range(i):
+            chan_in = electrode_mapping[chan_out]-1
+            unshuffle_matrix[chan_out, chan_in] = 1
 
 # the RMS multiplier to use to calculate voltage thresholds
 if 'thresh_mult' in graph_params:
@@ -361,7 +357,7 @@ all_data = np.empty((np.sum(ch_per_stream), n_samples), dtype=np.float64)
 logging.info(f'Computing thresholds from {n_samples} samples')
 
 tot_ch = 0
-for s, n_entries, n_ch, mat in zip(stream_info, num_entries, ch_per_stream, unshuffle_matrices):
+for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
     this_ch = np.arange(tot_ch, tot_ch+n_ch)
 
     reply = xread_count(r,
@@ -380,8 +376,11 @@ for s, n_entries, n_ch, mat in zip(stream_info, num_entries, ch_per_stream, unsh
             np.frombuffer(entry_data[s['key'].encode()], dtype=s['structure']['sample_type']),
             (n_ch, s['structure']['samp_per_stream']))
         i_start = i_end
-    all_data[this_ch, :] = np.float64(mat@stream_data[:, :n_samples])
+    all_data[this_ch, :] = np.float64(stream_data[:, :n_samples])
     tot_ch += n_ch
+
+# unshuffle data
+all_data = unshuffle_matrix @ all_data
 
 
 ###############################################
@@ -512,7 +511,8 @@ r.xadd('normalization_parameters', {
     'stds': stds.tobytes()})
 
 r.xadd('rereference_parameters', {
-    'channel_scaling': reref_params.tobytes()})
+    'channel_scaling': reref_params.tobytes(),
+    'channel_unshuffling': unshuffle_matrix.tobytes()})
 
 output_dict = {
     'stream_info': stream_info,
@@ -531,6 +531,7 @@ output_dict['thresholds'] = thresholds.reshape(-1).tolist()
 output_dict['means'] = means.tolist()
 output_dict['stds'] = stds.tolist()
 output_dict['rereference_parameters'] = reref_params.tolist()
+output_dict['channel_unshuffling'] = unshuffle_matrix.tolist()
 
 save_filename = save_filename + '.yaml'
 save_filepath = os.path.join(save_filepath, 'thresh_norm')
