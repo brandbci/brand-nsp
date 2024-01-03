@@ -144,6 +144,36 @@ for s in stream_info:
     num_entries.append(r.xlen(s['name']))
     num_samples.append(num_entries[-1]*s['structure']['samp_per_stream'])
 
+# looks if unshuffle dict is specified and available, to enable unshuffling
+if 'unshuffle_file' in graph_params:
+    unshuffle_file = graph_params['unshuffle_file']
+    try: 
+        unshuffle_dict = json.load(unshuffle_file)
+        logging.warning(f'Array index unshuffle dict loaded from file: {unshuffle_file}')
+        unshuffle = True
+    except:
+        logging.warning(f'Array index unshuffle dict could not be loaded from file defined by \'unshuffle_file\': {unshuffle_file}. Will assume channels are ordered correctly')
+        unshuffle = False
+else:
+    logging.warning(f'No array index unshuffle dict provided by field \'unshuffle_file\'. Will assume channels are ordered correctly')
+    unshuffle = False
+
+# if no unshuffling, use identifity matrices
+if unshuffle == False or unshuffle_idxs is None:
+    unshuffle_matrices = []
+    for c in ch_per_stream:
+        mat = np.eye(c)
+        unshuffle_matrices.append(mat)
+# if unshuffling, build unshuffling matrices
+else:
+    for i, c in enumerate(ch_per_stream):
+        stream_electrode_mapping = np.array(unshuffle_dict['electrode_mapping'][i])
+        mat = np.zeros(c)
+        for chan_out in range(c):
+            for chan_in in range(c):
+                mat[chan_out, chan_in] = 1
+        unshuffle_matrices.append(mat)
+
 # the RMS multiplier to use to calculate voltage thresholds
 if 'thresh_mult' in graph_params:
     thresh_mult = graph_params['thresh_mult']
