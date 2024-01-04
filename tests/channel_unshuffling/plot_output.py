@@ -16,20 +16,23 @@ with open(path, 'r') as file:
 reref_param = np.array(yaml_dict['rereference_parameters'])
 plt.matshow(reref_param)
 plt.colorbar()
-plt.tight_layout()
+plt.xlabel('NSP channel #')
+plt.ylabel('electrode #')
 plt.savefig('./reref_param.png')
 
 unshuffle_matrix = np.array(yaml_dict['channel_unshuffling'])
 plt.matshow(unshuffle_matrix)
 plt.colorbar()
-plt.tight_layout()
+plt.xlabel('NSP channel #')
+plt.ylabel('electrode #')
 plt.savefig('./unshuffle_matrix.png')
 
 reref_matrix = (np.eye(reref_param.shape[0]) - reref_param) @ unshuffle_matrix
-# reref_matrix = reref_param @ unshuffle_matrix
 plt.matshow(reref_matrix)
 plt.colorbar()
-plt.tight_layout()
+plt.xlabel('NSP channel #')
+plt.ylabel('electrode #')
+
 plt.savefig('./reref_matrix.png')
 
 print(reref_matrix.min())

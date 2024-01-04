@@ -1,0 +1,37 @@
+
+# graph parameters
+parameters:
+  nsp_channels: &nsp_channels 256
+  total_features: &total_features 512
+
+# node-specific parameters
+nodes:
+
+  - name: re_reference
+    nickname: re_ref
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 23
+    redis_outputs:
+      # reref_neural: rerefContinuousNeural
+    parameters:
+      log: INFO
+      input_stream_name: nsp_neural
+      output_stream_name: reref_neural
+      coefs_stream_name: rereference_parameters
+      chan_per_stream: *nsp_channels
+      samp_per_stream: 30
+      chan_total: *nsp_channels
+      start_channel: 0
+      output_dtype: float32
+
+  - name: block_timer
+    nickname: block_timer
+    machine: brand
+    module: ../brand-modules/brand-emory
+    run_priority: 99
+    cpu_affinity: 22
+    parameters:
+      log: INFO
+      seconds: 10
