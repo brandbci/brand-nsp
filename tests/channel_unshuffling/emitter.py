@@ -34,25 +34,25 @@ class Emitter():
     def run(self):
 
         # connect to redis
-        self.r = redis.Redis()
+        self.r = redis.Redis(host='192.168.30.6', port=27263)
 
-        # add rereference stream entry
-        participant = 'sim256'
-        session = '2024-01-03'
-        block = f'{participant}_240103_030'
-        path = f'/samba/data/{participant}/{session}/RawData/thresh_norm/{block}.yaml'
-        with open(path, 'r') as file:
-            yaml_dict = yaml.safe_load(file)
-        reref_param = np.array(yaml_dict['rereference_parameters'])
-        unshuffle_matrix = np.array(yaml_dict['channel_unshuffling'])
+        # # add rereference stream entry
+        # participant = 'sim256'
+        # session = '2024-01-03'
+        # block = f'{participant}_240103_030'
+        # path = f'/samba/data/{participant}/{session}/RawData/thresh_norm/{block}.yaml'
+        # with open(path, 'r') as file:
+        #     yaml_dict = yaml.safe_load(file)
+        # reref_param = np.array(yaml_dict['rereference_parameters'])
+        # unshuffle_matrix = np.array(yaml_dict['channel_unshuffling'])
 
-        self.reref_dict = {}
-        self.reref_dict['channel_scaling'] = reref_param.astype(np.float64).tobytes()
-        # self.reref_dict['channel_scaling'] = np.zeros((256,256)).astype(np.float64).tobytes()
-        self.reref_dict['channel_unshuffling'] = unshuffle_matrix.astype(np.float64).tobytes()
-        self.r.xadd(b'rereference_parameters', self.reref_dict)
+        # self.reref_dict = {}
+        # self.reref_dict['channel_scaling'] = reref_param.astype(np.float64).tobytes()
+        # # self.reref_dict['channel_scaling'] = np.zeros((256,256)).astype(np.float64).tobytes()
+        # self.reref_dict['channel_unshuffling'] = unshuffle_matrix.astype(np.float64).tobytes()
+        # self.r.xadd(b'rereference_parameters', self.reref_dict)
 
-        print(unshuffle_matrix.sum())
+        # print(unshuffle_matrix.sum())
 
         while True:
 

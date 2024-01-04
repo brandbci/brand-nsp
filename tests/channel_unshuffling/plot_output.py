@@ -5,9 +5,8 @@ from datetime import datetime
 import numpy as np
 
 participant = 'sim256'
-session_time = datetime(2024, 1, 3)
-session = '2024-01-03'
-block = f'{participant}_240103_030'
+session = '2024-01-04'
+block = f'{participant}_240104_006'
 path = f'/samba/data/{participant}/{session}/RawData/thresh_norm/{block}.yaml'
 
 with open(path, 'r') as file:
