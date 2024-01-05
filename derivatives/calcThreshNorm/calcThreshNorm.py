@@ -144,6 +144,33 @@ for s in stream_info:
     num_entries.append(r.xlen(s['name']))
     num_samples.append(num_entries[-1]*s['structure']['samp_per_stream'])
 
+# looks if unshuffle dict is specified and available, to enable unshuffling
+if 'unshuffle_file' in graph_params:
+    unshuffle_file = graph_params['unshuffle_file']
+    try: 
+        with open(unshuffle_file, 'r') as f:
+            unshuffle_dict = json.load(f)
+        logging.info(f'Array index unshuffle dict loaded from file: {unshuffle_file}')
+        unshuffle = True
+    except:
+        logging.warning(f'Array index unshuffle dict could not be loaded from file defined by \'unshuffle_file\': {unshuffle_file}. Will assume channels are ordered correctly')
+        unshuffle = False
+else:
+    logging.warning(f'No array index unshuffle dict provided by field \'unshuffle_file\'. Will assume channels are ordered correctly')
+    unshuffle = False
+
+# if no unshuffling, use identity matrix
+if unshuffle == False:
+    unshuffle_matrix = np.eye(np.sum(ch_per_stream), dtype=np.float64)
+# if unshuffling, build unshuffling matrices
+else:
+    n_chan = np.sum(ch_per_stream)
+    unshuffle_matrix = np.zeros((n_chan,n_chan), dtype=np.float64)
+    electrode_mapping = np.array(unshuffle_dict['electrode_mapping'])
+    for chan_in in range(n_chan):
+        chan_out = electrode_mapping[chan_in]-1
+        unshuffle_matrix[chan_out, chan_in] = 1
+
 # the RMS multiplier to use to calculate voltage thresholds
 if 'thresh_mult' in graph_params:
     thresh_mult = graph_params['thresh_mult']
@@ -351,6 +378,9 @@ for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
     all_data[this_ch, :] = np.float64(stream_data[:, :n_samples])
     tot_ch += n_ch
 
+# unshuffle data
+all_data = unshuffle_matrix @ all_data
+
 
 ###############################################
 # Filter if requested
@@ -480,7 +510,8 @@ r.xadd('normalization_parameters', {
     'stds': stds.tobytes()})
 
 r.xadd('rereference_parameters', {
-    'channel_scaling': reref_params.tobytes()})
+    'channel_scaling': reref_params.tobytes(),
+    'channel_unshuffling': unshuffle_matrix.tobytes()})
 
 output_dict = {
     'stream_info': stream_info,
@@ -499,6 +530,7 @@ output_dict['thresholds'] = thresholds.reshape(-1).tolist()
 output_dict['means'] = means.tolist()
 output_dict['stds'] = stds.tolist()
 output_dict['rereference_parameters'] = reref_params.tolist()
+output_dict['channel_unshuffling'] = unshuffle_matrix.tolist()
 
 save_filename = save_filename + '.yaml'
 save_filepath = os.path.join(save_filepath, 'thresh_norm')

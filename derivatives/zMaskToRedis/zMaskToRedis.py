@@ -123,6 +123,21 @@ if 'exclude_channels' in graph_params:
 else:
     exclude_channels = []
 
+# looks if unshuffle dict is specified and available, to enable unshuffling
+if 'unshuffle_file' in graph_params:
+    unshuffle_file = graph_params['unshuffle_file']
+    try: 
+        with open(unshuffle_file, 'r') as f:
+            unshuffle_dict = json.load(f)
+        logging.info(f'Array index unshuffle dict loaded from file: {unshuffle_file}')
+        unshuffle = True
+    except:
+        logging.warning(f'Array index unshuffle dict could not be loaded from file defined by \'unshuffle_file\': {unshuffle_file}. Will assume channels are ordered correctly')
+        unshuffle = False
+else:
+    logging.warning(f'No array index unshuffle dict provided by field \'unshuffle_file\'. Will assume channels are ordered correctly')
+    unshuffle = False
+
 # load total number of channels from the session environment file
 array_sizes = env['ARRAY_SIZES']
 array_sizes = array_sizes.replace('(', '').replace(')', '')
@@ -207,7 +222,14 @@ else:
 # exclude specified channels
 channel_mask = np.setdiff1d(channel_mask, exclude_channels)
 
-logging.info(f'Channels being included: {channel_mask.tolist()}')
+logging.info(f'NSP channels being included: {channel_mask.tolist()}')
+
+if unshuffle:
+    channel_mask = np.array(unshuffle_dict['electrode_mapping'])[channel_mask]
+
+channel_mask = np.sort(channel_mask)
+
+logging.info(f'Electrodes being included: {channel_mask}')
 
 ###############################################
 # Store channel mask in Redis

@@ -93,18 +93,27 @@ class reReference(BRANDNode):
         entries = self.r.xrevrange(self.coefs_stream_name, '+', '-', count=1)
 
         if len(entries):
-            logging.info(f"Coefficients entry not found in Redis stream: {self.coefs_stream_name}. Setting coefficients to compute mean of all channels.")
+            logging.info(f"Coefficients entry found in Redis stream: {self.coefs_stream_name}")
 
             entry_id, entry_dict = entries[0] 
 
             self.coefs_all = np.frombuffer(entry_dict[b'channel_scaling'], dtype=np.float64).reshape((self.chan_total, self.chan_total))
             self.coefs = self.coefs_all[self.start_channel:self.chan_per_stream, self.start_channel:self.chan_per_stream]
 
-            self.coefs = np.eye(self.chan_per_stream) - self.coefs
+            if b'channel_unshuffling' in entry_dict:
+                self.unshuffle_all = np.frombuffer(entry_dict[b'channel_unshuffling'], dtype=np.float64).reshape((self.chan_total, self.chan_total))
+                logging.info(f"Unshuffling matrix loaded from stream.")
+            else:
+                self.unshuffle_all = np.eye(self.chan_total, dtype=np.float64)
+                logging.info(f"No unshuffling matrix found. Assuming channels are in order.")
+            
+            self.unshuffle = self.unshuffle_all[self.start_channel:self.chan_per_stream, self.start_channel:self.chan_per_stream]
+
+            self.coefs = (np.eye(self.chan_per_stream) - self.coefs) @ self.unshuffle
             self.coefs = self.coefs.astype(self.output_dtype)
 
         else:
-            logging.info(f"Coefficients entry found in Redis stream: {self.coefs_stream_name}")
+            logging.info(f"Coefficients entry not found in Redis stream: {self.coefs_stream_name}. Setting coefficients to compute mean of all channels.")
 
             self.coefs = np.eye(self.chan_per_stream) - np.ones((self.chan_per_stream, self.chan_per_stream))/self.chan_per_stream
             self.coefs.astype(self.parameters['output_dtype'])
