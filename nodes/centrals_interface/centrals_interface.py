@@ -42,15 +42,12 @@ class CentralsInterface(BRANDNode):
         else:
             self.save_path.replace('$PC1_USER', pc1_user)
 
-        # read block metadata
+        # read block metadata and wait until the node updates dbfilename
         self.metadata_stream = self.parameters['metadata_stream']
-        # need to periodically scan for block_metadata
-        while True:
-            metadata = self.r.xrevrange(self.metadata_stream, count=1)
-            if len(metadata) > 0:
-                break
-            time.sleep(0.05)
-        metadata = metadata[0][1]
+        # get final ID of ms prior to supergraph entry to ensure we xread only this block's metadata
+        metadata_id = str(int(self.supergraph_id.split(b'-')[0])-1)+'-'+str(0xFFFFFFFFFFFFFFFF)
+        metadata = self.r.xread({self.metadata_stream: metadata_id}, block=0)
+        metadata = metadata[0][1][-1][1]
 
         self.participant = metadata[b'participant'].decode('utf-8')
         self.session_name = metadata[b'session_name'].decode('utf-8')
