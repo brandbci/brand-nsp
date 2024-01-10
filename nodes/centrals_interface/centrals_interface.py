@@ -36,7 +36,11 @@ class CentralsInterface(BRANDNode):
             pc1_user = pc1_user.split('\\')[1] + '.' + pc1_user.split('\\')[0]
 
         # Build Windows save path
-        self.save_path = 'C:\\Users\\' + pc1_user + '\\projects\\Data' 
+        self.save_path = os.environ.get('NSX_DIR')
+        if self.save_path is None:
+            self.save_path = f'C:\\Users\\{pc1_user}\\projects\\Data'
+        else:
+            self.save_path.replace('$PC1_USER', pc1_user)
 
         # read block metadata
         self.metadata_stream = self.parameters['metadata_stream']
