@@ -40,12 +40,12 @@ class CentralsInterface(BRANDNode):
         if self.save_path is None:
             self.save_path = f'C:\\Users\\{pc1_user}\\projects\\Data'
         else:
-            self.save_path.replace('$PC1_USER', pc1_user)
+            self.save_path = self.save_path.replace('$PC1_USER', pc1_user)
 
         # read block metadata and wait until the node updates dbfilename
         self.metadata_stream = self.parameters['metadata_stream']
         # get final ID of ms prior to supergraph entry to ensure we xread only this block's metadata
-        metadata_id = str(int(self.supergraph_id.split(b'-')[0])-1)+'-'+str(0xFFFFFFFFFFFFFFFF)
+        metadata_id = str(int(self.supergraph_id.split('-')[0])-1)+'-'+str(0xFFFFFFFFFFFFFFFF)
         metadata = self.r.xread({self.metadata_stream: metadata_id}, block=0)
         metadata = metadata[0][1][-1][1]
 
