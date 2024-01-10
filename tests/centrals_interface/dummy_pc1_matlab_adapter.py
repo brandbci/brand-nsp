@@ -5,7 +5,6 @@ import redis
 import signal
 import logging
 import argparse
-import matlab.engine
 
 from redis import Redis, ConnectionError, ResponseError 
 
@@ -115,9 +114,6 @@ class MatlabAdapter(StandaloneBrandNode):
         # Start MATLAB session, TODO: handle errors (what will happen if the MATLAB session is already running / not properly killed?)
         # os.system('matlab -nosplash -nodesktop -r "matlab.engine.shareEngine(\'MATLABEngineforBRAND\')"')
 
-        self.engine = matlab.engine.start_matlab('-nosplash -nodesktop')
-        self.engine.addpath(self.engine.genpath('C:\\Program Files\\Blackrock Microsystems\\NeuroPort-Central-Suite'))
-
         self.input_stream_dict = {
             PC1_MATLAB_COMMAND_STREAM : '$'
         }
@@ -146,15 +142,19 @@ class MatlabAdapter(StandaloneBrandNode):
         try:
             split_fileout_semicolon = matlab_script_str.split(';')
             # find which split contains 'fileout = '
+            fileout_split = None
             for split in split_fileout_semicolon:
                 if 'fileout = ' in split:
                     fileout_split = split
                     break
-            # find the fileout path
-            fileout_path = fileout_split.split('=')[1].strip()
-            # create the file
-            with open(fileout_path+'_test.txt', 'w') as f:
-                f.write(f'Received MATLAB command:\n{matlab_script_str}\n\n')
+            if fileout_split is not None:
+                # find the fileout path
+                fileout_path = fileout_split.split('= ')[1]
+                fileout_path = fileout_path.replace('\'', '')
+                # create the file
+                os.makedirs(os.path.dirname(fileout_path), exist_ok=True)
+                with open(fileout_path+'_test.txt', 'w') as f:
+                    f.write(f'Received MATLAB command:\n{matlab_script_str}\n\n')
         except Exception as e:
             result = f'Unable to execute the received MATLAB script, please check the entry ({entry_id}) in the <{PC1_MATLAB_COMMAND_STREAM}> stream. {str(e)}'
             logging.warning(result) 
@@ -182,7 +182,6 @@ class MatlabAdapter(StandaloneBrandNode):
 
     def cleanup(self):
         # Close MATLAB session
-        self.engine.quit()
         super().cleanup()
 
 if __name__ == '__main__':
