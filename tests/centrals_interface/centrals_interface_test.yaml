@@ -22,11 +22,11 @@ nodes:
       env_file_path: /samba/tmp/BRAND/environment.sh
 
 derivatives:
-  - saveRDB:
-      name: saveRDB.py
-      module: ../brand-modules/brand-emory
-      autorun: True
-      parameters:
-        flush_streams_before_save: []
-        flush_rdb_after_save: True
-        flush_rdb_except_streams: [thresholds,normalization_parameters,normalize_exit_parameters,z_mask_stream]
+  - name: saveRDB.py
+    nickname: saveRDB
+    module: ../brand-modules/brand-emory
+    autorun: 9
+    parameters:
+      flush_streams_before_save: []
+      flush_rdb_after_save: True
+      flush_rdb_except_streams: [thresholds,normalization_parameters,normalize_exit_parameters,z_mask_stream]
