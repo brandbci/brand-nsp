@@ -126,7 +126,7 @@ else:
 # looks if unshuffle dict is specified and available, to enable unshuffling
 if 'unshuffle_file' in graph_params:
     unshuffle_file = graph_params['unshuffle_file']
-    try: 
+    try:
         with open(unshuffle_file, 'r') as f:
             unshuffle_dict = json.load(f)
         logging.info(f'Array index unshuffle dict loaded from file: {unshuffle_file}')
@@ -225,7 +225,8 @@ channel_mask = np.setdiff1d(channel_mask, exclude_channels)
 logging.info(f'NSP channels being included: {channel_mask.tolist()}')
 
 if unshuffle:
-    channel_mask = np.array(unshuffle_dict['electrode_mapping'])[channel_mask]
+    channel_mask = np.array(
+        unshuffle_dict['electrode_mapping'])[channel_mask] - 1
 
 channel_mask = np.sort(channel_mask)
 
