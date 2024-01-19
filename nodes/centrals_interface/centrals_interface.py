@@ -52,8 +52,11 @@ class CentralsInterface(BRANDNode):
         self.participant = metadata[b'participant'].decode('utf-8')
         self.session_name = metadata[b'session_name'].decode('utf-8')
         
-        rdbfilename = self.r.config_get('dbfilename')['dbfilename']
-        self.filepath = rdbfilename.replace('.rdb', '')
+        if b'block_id' in metadata:
+            self.filepath = metadata[b'block_id'].decode('utf-8')   
+        else: 
+            rdbfilename = self.r.config_get('dbfilename')['dbfilename']
+            self.filepath = rdbfilename.replace('.rdb', '')
         self.filepath = '\\'.join((
             self.save_path,
             self.participant,
