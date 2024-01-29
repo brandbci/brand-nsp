@@ -46,7 +46,12 @@ class CentralsInterface(BRANDNode):
         self.metadata_stream = self.parameters['metadata_stream']
         # get final ID of ms prior to supergraph entry to ensure we xread only this block's metadata
         metadata_id = str(int(self.supergraph_id.split('-')[0])-1)+'-'+str(0xFFFFFFFFFFFFFFFF)
-        metadata = self.r.xread({self.metadata_stream: metadata_id}, block=0)
+        while True:
+            metadata = self.r.xread({self.metadata_stream: metadata_id}, block=1000)
+            if metadata:
+                break
+            else:
+                logging.warning(f'No metadata found in {self.metadata_stream}')
         metadata = metadata[0][1][-1][1]
 
         self.participant = metadata[b'participant'].decode('utf-8')
