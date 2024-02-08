@@ -431,7 +431,7 @@ if filter_first:
     else:
         all_data = scipy.signal.sosfiltfilt(sos, all_data, axis=1)
 
-
+logging.debug('Finished filtering')
 ###############################################
 # Compute rereferencing parameters
 ###############################################
@@ -483,6 +483,8 @@ if reref == 'car':
         ch_count += s
 
 elif reref == 'lrr':
+    # use single-precision for faster compute
+    all_data = all_data.astype(np.float32)
     with Parallel(n_jobs=-1, require='sharedmem') as parallel:
         # loop through the groups and compute LRR for each one
         ch_count = 0
@@ -500,10 +502,10 @@ elif reref == 'lrr':
                 reref_params[ch, grp] = output
 
             ch_count += s
-
+    all_data = all_data.astype(np.float64)
 # Re-reference the data
 all_data = rereference_data(all_data, reref_params)
-
+logging.debug('Finished rereferencing')
 
 ###############################################
 # Compute thresholds
@@ -541,7 +543,7 @@ if norm_bp:
 means = binned.mean(axis=0)
 stds = binned.std(axis=0)
 
-
+logging.debug('Finished computing thresholds')
 ###############################################
 # Save file & write to Redis
 ###############################################
