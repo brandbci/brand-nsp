@@ -16,6 +16,7 @@ import scipy.signal
 import signal
 import sys
 import yaml
+from joblib import Parallel, delayed
 
 from brand.redis import xread_count, RedisLoggingHandler
 
@@ -441,6 +442,39 @@ def rereference_data(data, reref_params):
     reref_data = reref_mat @ data
     return reref_data
 
+
+def calc_lrr_params_parallel(channel, group, decimate=1):
+    """
+    Calculate parameters for linear regression reference. This version is
+    made to be used with multiprocessing.
+
+    Parameters
+    ----------
+    channel : int
+        Index of the channel for which the reference is being computed
+    group : array-like of shape (n_group_channels,)
+        List of channels to use for the referencing
+    decimate : int, optional
+        Factor by which to decimate the data, by default 1 (no decimation)
+
+    Returns
+    -------
+    channel : int
+        Index of the channel for which the reference was computed
+    group : array-like of shape (n_ref_channels,)
+        List of channels used for the referencing
+    params : numpy.ndarray of shape (n_ref_channels,)
+        Weights of each channel to use when rereferencing
+    """
+    grp = np.setdiff1d(group, channel)
+
+    X = all_data[grp, ::decimate].T
+    y = all_data[channel, ::decimate].reshape(1, -1)
+    params = np.linalg.solve(X.T @ X, X.T @ y.T).T
+
+    return channel, grp, params
+
+
 reref_params = np.zeros((tot_ch, tot_ch), dtype=np.float64)
 if reref == 'car':
     ch_count = 0
@@ -449,15 +483,25 @@ if reref == 'car':
         ch_count += s
 
 elif reref == 'lrr':
-    ch_count = 0
-    for g, s in zip(reref_groups, reref_sizes):
-        for ch in range(ch_count, ch_count+s):
-            grp = np.setdiff1d(g, ch)
-            X = all_data[grp, ::decimate].T
-            y = all_data[ch, ::decimate].reshape(1, -1)
-            reref_params[ch, grp] = (y @ X) @ np.linalg.inv(X.T @ X) # sklearn is slow
-        ch_count += s
+    with Parallel(n_jobs=-1, require='sharedmem') as parallel:
+        # loop through the groups and compute LRR for each one
+        ch_count = 0
+        for idx, (g, s) in enumerate(zip(reref_groups, reref_sizes)):
+            # compute the LRR parameters for each channel in this group
+            tasks = [
+                delayed(calc_lrr_params_parallel)(channel=ch, group=g)
+                for ch in range(ch_count, ch_count + s)
+            ]
+            lrr_params = parallel(tasks)
+            # unpack the parallel execution results - assign the LRR parameters
+            # to the reref_params array
+            for item in lrr_params:
+                ch, grp, output = item
+                reref_params[ch, grp] = output
 
+            ch_count += s
+
+# Re-reference the data
 all_data = rereference_data(all_data, reref_params)
 
 
