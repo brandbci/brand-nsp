@@ -219,8 +219,6 @@ if impedance_files:
 else:
     channel_mask = np.arange(sum(array_sizes))
 
-logging.info(f'NSP channels being included: {channel_mask.tolist()}')
-
 if unshuffle:
     channel_mask = np.array(
         unshuffle_dict['electrode_mapping'])[channel_mask] - 1
