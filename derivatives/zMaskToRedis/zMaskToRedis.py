@@ -219,9 +219,6 @@ if impedance_files:
 else:
     channel_mask = np.arange(sum(array_sizes))
 
-# exclude specified channels
-channel_mask = np.setdiff1d(channel_mask, exclude_channels)
-
 logging.info(f'NSP channels being included: {channel_mask.tolist()}')
 
 if unshuffle:
@@ -230,11 +227,16 @@ if unshuffle:
 
 channel_mask = np.sort(channel_mask)
 
+# exclude specified channels
+channel_mask = np.setdiff1d(channel_mask, exclude_channels)
+
 logging.info(f'Electrodes being included: {channel_mask}')
 
 ###############################################
 # Store channel mask in Redis
 ###############################################
 
-r.xadd('z_mask_stream',
+mask_stream = 'z_mask_stream'
+logging.info(f"Storing channel mask in Redis stream {mask_stream}")
+r.xadd(mask_stream,
        {'channels': channel_mask.astype(np.uint16).tobytes()})
