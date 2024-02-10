@@ -145,6 +145,8 @@ if 'channel_mask_stream' in graph_params and graph_params['channel_mask_stream']
             logging.info(f'Loaded channel mask from {channel_mask_stream}')
         else:
             logging.warning(f'Could not find channel mask in stream {channel_mask_stream}, skipping')
+    
+    logging.info('This derivative assumes channel masks are in the unshuffled order (i.e. electrodes belonging to each array are contiguous)')
 
 ###############################################
 # Build channel mask using the specified arrays
