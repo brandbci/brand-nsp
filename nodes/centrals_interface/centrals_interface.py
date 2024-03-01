@@ -38,7 +38,7 @@ class CentralsInterface(BRANDNode):
         # Build Windows save path
         self.save_path = os.environ.get('PC1_DATA_DIR')
         if self.save_path is None:
-            self.save_path = f'C:\\Users\\{pc1_user}\\projects\\Data'
+            self.save_path = f'E:\\Data'
         else:
             self.save_path = self.save_path.replace('$PC1_USER', pc1_user)
 
