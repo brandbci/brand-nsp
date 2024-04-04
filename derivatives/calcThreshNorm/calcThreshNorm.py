@@ -547,7 +547,7 @@ def exponential_moving_average(data, alpha):
     return ema
 
 alpha = graph_params.get('ema_alpha', 0)
-binned_smth = exponential_moving_average(binned, alpha=alpha)
+binned = exponential_moving_average(binned, alpha=alpha)
 
 # calculate means and STDs
 means = binned.mean(axis=0)
