@@ -353,6 +353,12 @@ for g_idx in range(len(reref_groups)):
 
 # find how many entries to pull from each stream based on the minimum number of samples across streams
 n_samples = np.min(num_samples)
+if data_time_s is not None:
+    data_time_samples = int(data_time_s * samp_freq)
+    if n_samples < data_time_samples:
+        logging.warning(f'Not enough samples in data to process {data_time_s} seconds (only {n_samples} samples available, need {data_time_samples}), exiting')
+        sys.exit(0)
+    n_samples = data_time_samples
 for idx, s in enumerate(stream_info):
     num_entries[idx] = int(np.ceil(n_samples/s['structure']['samp_per_stream']))
 
@@ -367,17 +373,15 @@ tot_ch = 0
 for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
     this_ch = np.arange(tot_ch, tot_ch+n_ch)
 
-    reply = xread_count(r,
-                        stream=s['name'],
-                        startid='0',
-                        count=n_entries,
-                        block=0)
-
-    _, entries = reply[0]  # get the list of entries
+    entries = r.xrevrange(
+        s['name'],
+        '+',
+        '-',
+        count=n_entries)
 
     i_start = 0
     stream_data = np.empty((n_ch, s['structure']['samp_per_stream']*n_entries), s['structure']['sample_type'])
-    for _, entry_data in entries:  # put it all into an array
+    for _, entry_data in entries[::-1]:  # put it all into an array
         i_end = i_start + s['structure']['samp_per_stream']
         stream_data[:, i_start:i_end] = np.reshape(
             np.frombuffer(entry_data[s['key'].encode()], dtype=s['structure']['sample_type']),
@@ -385,14 +389,6 @@ for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
         i_start = i_end
     all_data[this_ch, :] = np.float64(stream_data[:, :n_samples])
     tot_ch += n_ch
-
-# cut data if more than needed
-if data_time_s is not None:
-    n_samples = int(data_time_s * samp_freq)
-    if n_samples > all_data.shape[1]:
-        logging.warning(f'Not enough samples in data to process {data_time_s} seconds (only {all_data.shape[1]} samples available, need {n_samples}), exiting')
-        sys.exit(0)
-    all_data = all_data[:, -n_samples:]
 
 logging.info(f'Processing {all_data.shape[1]} samples of data')
 
