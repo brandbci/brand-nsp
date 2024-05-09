@@ -18,7 +18,7 @@ import sys
 import yaml
 from joblib import Parallel, delayed
 
-from brand.redis import xread_count, RedisLoggingHandler
+from brand.redis import RedisLoggingHandler
 
 from redis import ConnectionError, Redis
 
