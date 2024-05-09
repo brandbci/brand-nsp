@@ -552,6 +552,16 @@ if norm_bp:
     binned_bp = bin_data(all_data[:, 1:].T ** 2, int(samp_freq * bin_size / 1e3)) / (samp_freq/1e3) # equivalent to bpExtraction node, divide by 30
     binned = np.hstack((binned, binned_bp))
 
+def exponential_moving_average(data, alpha):
+    ema = np.zeros_like(data, dtype=float)
+    ema[0] = data[0]
+    for i in range(1, len(data)):
+        ema[i] = (1 - alpha) * data[i] + (alpha) * ema[i - 1]
+    return ema
+
+alpha = graph_params.get('ema_alpha', 0)
+binned = exponential_moving_average(binned, alpha=alpha)
+
 # calculate means and STDs
 means = binned.mean(axis=0)
 stds = binned.std(axis=0)

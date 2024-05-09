@@ -72,10 +72,6 @@ int main (int argc_main, char **argv_main) {
     // graph_parameters_t graph_parameters = (graph_parameters_t) {51002, 3, {"cb_gen_1"}, {30000}, {6}, {96}, {30}};
     int numStreams = graph_parameters.num_streams; //will use this a lot, so pull it out
 
-    int udp_fd = initialize_socket(graph_parameters.broadcast_ip, graph_parameters.broadcast_port,
-        graph_parameters.broadcast_device);
-
-
     // argc    : The number of arguments in argv. The calculation is:
     //           int argc = 3 + 2 * 6;
     //           3                  -> xadd cerebusAdapter *
@@ -199,7 +195,10 @@ int main (int argc_main, char **argv_main) {
     message_header.msg_control    = msg_control_buffer;
     message_header.msg_controllen = 65535;
 
-    sleep(1);
+    sleep(1);  // wait a second for the NSP to start
+
+    int udp_fd = initialize_socket(graph_parameters.broadcast_ip,
+        graph_parameters.broadcast_port, graph_parameters.broadcast_device);
 
     printf("[%s] Entering loop...\n", NICKNAME);
 
