@@ -121,8 +121,8 @@ if 'arrays' in graph_params and graph_params['arrays'] is not None and graph_par
         logging.error('No valid arrays specified, exiting')
         sys.exit(1)
 else:
-    logging.info('No arrays specified, assuming all arrays are included')
-    arrays = array_names
+    logging.info('No arrays specified')
+    arrays = None
 
 # combine with another channel mask, if desired
 ext_channel_masks = []
@@ -159,8 +159,8 @@ else:
 
 # get all possible array combinations
 array_combinations = [c
-                      for num_arrays in range(1, len(arrays) + 1)
-                      for c in combinations(range(len(arrays)), num_arrays)]
+                      for num_arrays in range(1, len(array_names) + 1)
+                      for c in combinations(range(len(array_names)), num_arrays)]
 
 array_channel_boundaries = np.cumsum(array_sizes)
 channel_mask = {comb: [] for comb in array_combinations}
@@ -191,10 +191,12 @@ for comb in channel_mask:
     stream_name = '_'.join([array_names[i] for i in comb])
     stream_name = f'{stream_prefix}{mask_stream}_{stream_name}'
     p.xadd(stream_name, {'channels': channel_mask[comb].astype(np.uint16).tobytes()})
-arrays_idx = [array_names.index(array) for array in arrays]
-arrays_idx.sort()
-p.xadd(mask_stream,
-       {'channels': channel_mask[tuple(arrays_idx)].astype(np.uint16).tobytes()})
+if arrays is not None:
+    arrays_idx = [array_names.index(array) for array in arrays]
+    arrays_idx.sort()
+    logging.info(f'Electrodes being included in array_mask stream: {channel_mask[tuple(arrays_idx)].tolist()}')
+    p.xadd(mask_stream,
+        {'channels': channel_mask[tuple(arrays_idx)].astype(np.uint16).tobytes()})
 p.execute()
 
-logging.info('Channel masks written to Redis.')
+logging.info('Array masks written to Redis.')
