@@ -334,6 +334,14 @@ if 'bin_size' in graph_params:
 else:
     bin_size = 10 # ms
 
+if 'replace_0_std' in graph_params:
+    replace_0_std = graph_params['replace_0_std']
+    if not isinstance(replace_0_std, numbers.Number):
+        logging.error(f'\'replace_0_std\' must be of type \'numbers.Number\', but it was {replace_0_std}. Exiting')
+        sys.exit(1)
+else:
+    replace_0_std = 1
+
 # keep only masked channels
 for g_idx in range(len(reref_groups)):
     reref_groups[g_idx] = list(set(reref_groups[g_idx]).intersection(set(ch_mask)))
@@ -552,8 +560,9 @@ binned = exponential_moving_average(binned, alpha=alpha)
 # calculate means and STDs
 means = binned.mean(axis=0)
 stds = binned.std(axis=0)
+stds[stds <= 1e-8] = replace_0_std
 
-logging.debug('Finished computing thresholds')
+logging.debug('Finished computing thresholds and normalization parameters')
 ###############################################
 # Save file & write to Redis
 ###############################################
