@@ -17,25 +17,6 @@ from numba import jit
 from brand import BRANDNode
 
 
-# @nb.jit
-# def matmul(A, B):
-    
-#     m,n = A.shape
-#     p = B.shape[1]
-
-#     C = np.zeros((m,p))
-
-#     for i in range(0,m):
-#         for j in range(0,p):
-#             for k in range(0,n):
-#                 C[i,j] += A[i,k]*B[k,j] 
-#     return C
-
-#     # for ch in range(self.chan_per_stream):
-#     #     self.neural_data_reref[ch,:] = np.matmul(self.coefs[ch,:], self.neural_data)
-#     # return np.matmul(A, B)
-
-
 class reReference(BRANDNode):
 
     def __init__(self):
@@ -65,6 +46,9 @@ class reReference(BRANDNode):
             self.ts_field = self.parameters['ts_field'] 
         else:
             self.ts_field = 'BRANDS_time'
+        
+        self.nsp_ts_field = self.parameters.setdefault('nsp_ts_field', 'timestamps').encode()
+        self.nsp_ts_dtype = self.parameters.setdefault('nsp_ts_dtype', 'uint64')
 
         # terminate on SIGINT
         signal.signal(signal.SIGINT, self.terminate)
@@ -83,10 +67,9 @@ class reReference(BRANDNode):
         self.input_id = '$'
         self.output_dict = {}
 
-        logging.info(f"Parameters loaded. Reading from stream: {self.input_stream_name}. Writing to stream: {self.output_stream_name}")
+        self.last_ts = np.array([0])
 
-        # os.environ["OMP_NUM_THREADS"] = "2"
-        # logging.info(f"Num threads: {n_threads}")
+        logging.info(f"Parameters loaded. Reading from stream: {self.input_stream_name}. Writing to stream: {self.output_stream_name}")
 
     def initialize_coefficients(self):
 
@@ -119,29 +102,6 @@ class reReference(BRANDNode):
 
             self.coefs = np.eye(self.chan_per_stream) - np.ones((self.chan_per_stream, self.chan_per_stream))/self.chan_per_stream
             self.coefs.astype(self.parameters['output_dtype'])
-
-    # def calc(self):
-    #     return self.matmul
-
-    # @staticmethod
-    # @jit(nopython=True)
-    # def matmul(A, B):
-        
-    #     m,n = A.shape
-    #     p = B.shape[1]
-
-    #     C = np.zeros((m,p))
-
-    #     for i in range(0,m):
-    #         for j in range(0,p):
-    #             for k in range(0,n):
-    #                 C[i,j] += A[i,k]*B[k,j] 
-    #     return C
-
-    #     # for ch in range(self.chan_per_stream):
-    #     #     self.neural_data_reref[ch,:] = np.matmul(self.coefs[ch,:], self.neural_data)
-    #     # return np.matmul(A, B)
-
         
     def run(self):
 
@@ -154,31 +114,24 @@ class reReference(BRANDNode):
 
             self.input_id = self.replies[0][1][0][0]
             self.entry_data = self.replies[0][1][0][1]
-
-            # self.input_id, entry_data = entries[0]
+            
+            # read timestamps
+            ts = np.concatenate([self.last_ts, np.frombuffer(self.entry_data[self.nsp_ts_field], dtype=self.nsp_ts_dtype).astype(int)])
+            # check if timestamps are in order
+            neg_time_diff = np.diff(ts) < 0
+            if np.any(neg_time_diff):
+                neg_ts = ts[1:][neg_time_diff]
+                logging.warning(f"Timestamps {neg_ts} are not in order!!!")
+            self.last_ts = ts[-1:]
             
             self.neural_data[:] = np.frombuffer(self.entry_data[self.neural_data_field.encode()], 
                                                 dtype=self.input_dtype).reshape((self.chan_per_stream, self.samp_per_stream)).astype(self.output_dtype)
-
-            # self.t_start = time.monotonic_ns()
-
-            # self.neural_data_reref[:] = self.coefs @ self.neural_data.astype(self.output_dtype)
-            # self.neural_data_reref[:] = np.matmul(self.coefs, self.neural_data)
-            # self.neural_data_reref[:] = np.dot(self.coefs, self.neural_data)
 
             self.n = 0
             while self.n < self.chan_per_stream:
                 self.neural_data_reref[self.n:self.n+self.n_split,:] = np.dot(self.coefs[self.n:self.n+self.n_split,:], 
                                                                               self.neural_data[:])
                 self.n += self.n_split
-
-            # for ch in range(self.chan_per_stream):
-            #     self.neural_data_reref[ch,:] = np.matmul(self.coefs[ch,:], self.neural_data)
-
-            # self.t_end = time.monotonic_ns()
-
-            # if self.t_end - self.t_start > 900000:
-            #     logging.info(f"Matrix operation duration (ns): {self.t_end - self.t_start}")
 
             # copy data to output dict
             for key in self.entry_data.keys():
