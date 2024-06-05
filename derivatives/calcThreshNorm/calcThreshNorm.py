@@ -357,7 +357,7 @@ if data_time_s is not None:
     data_time_samples = int(data_time_s * samp_freq)
     if n_samples < data_time_samples:
         logging.error(f'Not enough samples in data to process {data_time_s} seconds (only {n_samples} samples available, need {data_time_samples}), exiting')
-        sys.exit(0)
+        sys.exit(1)
     n_samples = data_time_samples
 for idx, s in enumerate(stream_info):
     num_entries[idx] = int(np.ceil(n_samples/s['structure']['samp_per_stream']))
