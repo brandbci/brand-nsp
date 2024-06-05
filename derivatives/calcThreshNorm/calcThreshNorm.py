@@ -266,7 +266,7 @@ else:
 # amount of data to process in seconds
 if 'data_time_s' in graph_params:
     data_time_s = graph_params['data_time_s']
-    if data_time_s is not None and (not isinstance(data_time_s, numbers.Number) or data_time_s < 1):
+    if data_time_s is not None and (not isinstance(data_time_s, numbers.Number) or data_time_s <= 0):
         logging.error(f'\'data_time_s\' must be a positive number, but it was {data_time_s}. Exiting')
         sys.exit(1)
 else:
@@ -356,7 +356,7 @@ n_samples = np.min(num_samples)
 if data_time_s is not None:
     data_time_samples = int(data_time_s * samp_freq)
     if n_samples < data_time_samples:
-        logging.warning(f'Not enough samples in data to process {data_time_s} seconds (only {n_samples} samples available, need {data_time_samples}), exiting')
+        logging.error(f'Not enough samples in data to process {data_time_s} seconds (only {n_samples} samples available, need {data_time_samples}), exiting')
         sys.exit(0)
     n_samples = data_time_samples
 for idx, s in enumerate(stream_info):
