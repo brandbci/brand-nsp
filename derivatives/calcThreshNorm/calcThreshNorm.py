@@ -148,7 +148,7 @@ for s in stream_info:
 # looks if unshuffle dict is specified and available, to enable unshuffling
 if 'unshuffle_file' in graph_params:
     unshuffle_file = graph_params['unshuffle_file']
-    try: 
+    try:
         with open(unshuffle_file, 'r') as f:
             unshuffle_dict = json.load(f)
         logging.info(f'Array index unshuffle dict loaded from file: {unshuffle_file}')
@@ -189,6 +189,8 @@ if 'norm_bp' in graph_params:
         sys.exit(1)
 else:
     norm_bp = False
+
+logscale_bp = graph_params.get('logscale_bp', False)
 
 if 'ch_mask_stream' in graph_params:
     ch_mask_entry = r.xrevrange(graph_params['ch_mask_stream'], '+', '-', count=1)
@@ -309,7 +311,7 @@ else:
     for c in ch_per_stream:
         reref_groups.append(np.arange(ch_count, ch_count+c).tolist())
         ch_count += c
-        
+
 # exclude channels
 if 'exclude_channels' in graph_params:
     exclude_ch = graph_params['exclude_channels']
@@ -399,7 +401,7 @@ if filter_first:
         Wn = butter_lowercut
     else:
         logging.error(f'Either butter low cutoff or high cutoff must be defined. Exiting')
-        sys.exit(1)        
+        sys.exit(1)
 
     sos = scipy.signal.butter(  butter_order,
                                 Wn,
@@ -536,7 +538,11 @@ binned = bin_data(crossings.T, int(samp_freq/1e3)) > 0
 binned = bin_data(binned, bin_size)
 
 if norm_bp:
-    binned_bp = bin_data(all_data[:, 1:].T ** 2, int(samp_freq * bin_size / 1e3)) / (samp_freq/1e3) # equivalent to bpExtraction node, divide by 30
+    power = all_data[:, 1:].T**2
+    if logscale_bp:
+        power = 10 * np.log10(power)
+    binned_bp = bin_data(power, int(samp_freq * bin_size / 1e3)) / (
+        samp_freq / 1e3)  # equivalent to bpExtraction node, divide by 30
     binned = np.hstack((binned, binned_bp))
 
 def exponential_moving_average(data, alpha):
