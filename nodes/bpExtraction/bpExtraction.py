@@ -28,6 +28,8 @@ class bpExtraction(BRANDNode):
         self.acausal_filter_lag = self.parameters['acausal_filter_lag']
         # whether to conduct common-average referencing
         self.demean = self.parameters['enable_CAR']
+        # whether to log-transform the band power
+        self.logscale = self.parameters.get('logscale', False)
 
         # parameters of the input stream
         self.input_stream = self.parameters['input_name']
@@ -48,7 +50,7 @@ class bpExtraction(BRANDNode):
                     ' attempting to use all neural channels')
                 self.n_range = np.arange(0, self.n_channels_total)
         else:
-            self.n_range = np.arange(0, self.n_channels_total)                               
+            self.n_range = np.arange(0, self.n_channels_total)
         self.n_range = self.n_range.astype(int)
         self.n_channels = self.n_range.shape[0]
 
@@ -322,7 +324,11 @@ class bpExtraction(BRANDNode):
                     samp_times_buffer[:-n_samp] = (samp_times_buffer[n_samp:])
                     samp_times_buffer[-n_samp:] = samp_times
                 # convert to power
-                power_buffer[:] = np.square(filt_buffer).mean(axis=1)
+                if self.logscale:
+                    power_buffer[:] = 10 * np.log10(
+                        np.square(filt_buffer)).mean(axis=1)
+                else:
+                    power_buffer[:] = np.square(filt_buffer).mean(axis=1)
 
                 # set sync index
                 if self.causal:
