@@ -4,22 +4,18 @@ Writes array based channel masks to Redis
 """
 
 import argparse
-import glob
 import json
 import logging
-import numbers
 import numpy as np
 import os
-import re
 import signal
 import sys
-import yaml
 
 from brand.redis import RedisLoggingHandler
 
-from datetime import datetime
-
 from dotenv import dotenv_values
+
+from itertools import combinations
 
 from redis import ConnectionError, Redis
 
@@ -125,8 +121,8 @@ if 'arrays' in graph_params and graph_params['arrays'] is not None and graph_par
         logging.error('No valid arrays specified, exiting')
         sys.exit(1)
 else:
-    logging.info('No arrays specified, assuming all arrays are included')
-    arrays = array_names
+    logging.info('No arrays specified')
+    arrays = None
 
 # combine with another channel mask, if desired
 ext_channel_masks = []
@@ -148,33 +144,59 @@ if 'channel_mask_stream' in graph_params and graph_params['channel_mask_stream']
     
     logging.info('This derivative assumes channel masks are in the unshuffled order (i.e. electrodes belonging to each array are contiguous)')
 
+# check for stream prefix parameter
+if 'stream_prefix' in graph_params and graph_params['stream_prefix'] is not None:
+    stream_prefix = graph_params['stream_prefix']
+    if not isinstance(stream_prefix, str):
+        logging.error('stream_prefix must be a string, exiting')
+        sys.exit(1)
+else:
+    stream_prefix = 'session:'
+
 ###############################################
-# Build channel mask using the specified arrays
+# Build  masks using all array combinations
 ###############################################
+
+# get all possible array combinations
+array_combinations = [c
+                      for num_arrays in range(1, len(array_names) + 1)
+                      for c in combinations(range(len(array_names)), num_arrays)]
 
 array_channel_boundaries = np.cumsum(array_sizes)
-channel_mask = []
-arrays_used_in_order = []
-for array, size, boundary in zip(array_names, array_sizes, array_channel_boundaries):
-    if array in arrays:
-        channel_mask.append(np.arange(boundary - size, boundary))
-        arrays_used_in_order.append(array)
+channel_mask = {comb: [] for comb in array_combinations}
+for comb in channel_mask:
+    for array_idx in comb:
+        channel_mask[comb].append(
+            np.arange(
+                array_channel_boundaries[array_idx] - array_sizes[array_idx],
+                array_channel_boundaries[array_idx]))
+    channel_mask[comb] = np.concatenate(channel_mask[comb])
 
-channel_mask = np.concatenate(channel_mask)
+    # combine with external channel masks
+    for ext_mask in ext_channel_masks:
+        channel_mask[comb] = np.intersect1d(channel_mask[comb], ext_mask)
 
-# combine with external channel masks
-for ext_mask in ext_channel_masks:
-    channel_mask = np.intersect1d(channel_mask, ext_mask)
-
-channel_mask = np.sort(channel_mask)
-
-logging.info(f'Electrodes being included: {channel_mask.tolist()}')
+    channel_mask[comb] = np.sort(channel_mask[comb])
 
 ###############################################
 # Store channel mask in Redis
 ###############################################
 
+# default mask stream if specified
 mask_stream = 'array_mask'
-logging.info(f'Storing channel mask in stream {mask_stream}')
-r.xadd(mask_stream,
-       {'channels': channel_mask.astype(np.uint16).tobytes()})
+
+# write all masks to Redis
+p = r.pipeline()
+for comb in channel_mask:
+    stream_name = '_'.join([array_names[i] for i in comb])
+    stream_name = f'{stream_prefix}{mask_stream}_{stream_name}'
+    p.xadd(stream_name, {'channels': channel_mask[comb].astype(np.uint16).tobytes()})
+if arrays is not None:
+    arrays_idx = [array_names.index(array) for array in arrays]
+    arrays_idx.sort()
+    logging.info(f'Electrodes being included in array_mask stream: {channel_mask[tuple(arrays_idx)].tolist()}')
+    p.xadd(mask_stream,
+        {'channels': channel_mask[tuple(arrays_idx)].astype(np.uint16).tobytes()})
+p.execute()
+
+logging.info('Array masks written to Redis.')
