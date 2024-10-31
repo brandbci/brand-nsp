@@ -40,8 +40,8 @@ The following parameters can be optionally set in the supergraph:
         butter_lowercut:    # lower cutoff frequency of the Butterworth filter in Hz, default 250
         butter_uppercut:    # upper cutoff frequency of the Butterworth filter in Hz, default 5000
         samp_freq:          # sampling frequency of the incoming data in Hz, default 30000
-        enable_CAR:         # whether to common-average reference the data prior to filtering, default True
-        CAR_group_sizes:    # the size of each CAR group as a value or a list following concatenation of the data ordered by 'input_stream_name', defaults to splitting by the number of channels in each stream
+        rereference:        # what type of rereferencing to apply after filtering data, options are CAR, LRR, or None (default)
+        reref_group_sizes:  # the size of each rereference group as a value or a list following concatenation of the data ordered by 'input_stream_name', defaults to splitting by the number of channels in each stream
         exclude_channels:   # a single value or a list of channels to exclude from common-average referencing following concatenation of the data ordered by 'input_stream_name', default None
         bin_size:           # the amount of time in ms over which to compute spiking rate normalization parameters
 ```

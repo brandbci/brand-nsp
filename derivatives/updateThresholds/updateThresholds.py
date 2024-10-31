@@ -5,33 +5,33 @@ and spike rate normalization parameters,
 then stores both in a file and Redis
 """
 
-from brand.redis import xread_count
+import argparse
 import json
 import logging
-import numbers
 import numpy as np
-import os
-from redis import ConnectionError, Redis
-import scipy.signal
 import signal
 import sys
-import yaml
+
+from brand.redis import RedisLoggingHandler
+
+from redis import ConnectionError, Redis
 
 ###############################################
 # Initialize script
 ###############################################
 
-NAME = 'updateThresholds'
+ap = argparse.ArgumentParser()
+ap.add_argument('-n', '--nickname', type=str, required=True)
+ap.add_argument('-i', '--redis_host', type=str, required=True)
+ap.add_argument('-p', '--redis_port', type=int, required=True)
+ap.add_argument('-s', '--redis_socket', type=str, required=False)
+args = ap.parse_args()
 
-rdb_file = sys.argv[1]
+NAME = args.nickname
+redis_host = args.redis_host
+redis_port = args.redis_port
+redis_socket = args.redis_socket
 
-redis_host = sys.argv[2]
-redis_port = sys.argv[3]
-
-save_filename = os.path.splitext(rdb_file)[0]
-save_filepath = sys.argv[4]
-
-# set up logging
 loglevel = 'INFO'
 numeric_level = getattr(logging, loglevel.upper(), None)
 if not isinstance(numeric_level, int):
@@ -40,22 +40,20 @@ logging.basicConfig(format=f'[{NAME}] %(levelname)s: %(message)s',
                     level=numeric_level,
                     stream=sys.stdout)
 
-###############################################
-## setting up clean exit code
-###############################################
 def signal_handler(sig, frame):  # setup the clean exit code with a warning
     logging.info('SIGINT received. Exiting...')
-    sys.exit(0)
+    sys.exit(1)
 
 # place the sigint signal handler
 signal.signal(signal.SIGINT, signal_handler)
+
 
 ###############################################
 # Connect to redis and pull supergraph
 ###############################################
 try:
     logging.info(f"Connecting to Redis at {redis_host}:{redis_port}...")
-    r = Redis(redis_host, redis_port, retry_on_timeout=True)
+    r = Redis(redis_host, redis_port, redis_socket, retry_on_timeout=True)
     r.ping()
 except ConnectionError as e:
     logging.error(f"Error with Redis connection, check again: {e}")
@@ -63,6 +61,8 @@ except ConnectionError as e:
 except:
     logging.error('Failed to connect to Redis. Exiting.')
     sys.exit(1)
+
+logging.getLogger().addHandler(RedisLoggingHandler(r, NAME))
 
 logging.info('Redis connection successful.')
 

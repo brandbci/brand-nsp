@@ -1,0 +1,140 @@
+graph_name: radial8_ol
+metadata:
+  participant_id: sim
+  session_description: Benchmark timing from threshold crossings to FSM
+
+# graph parameters
+parameters:
+  nsp_channels: &nsp_channels 96
+  total_channels: &total_channels 192
+
+# node-specific parameters
+nodes:
+
+  - name: thresholdExtraction
+    nickname: thresh_cross_1
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 8-9
+    redis_outputs:
+      thresh_cross_1: thresh_cross
+    parameters:
+      log: INFO
+      pack_per_call: 1 # number of redis packets to pull per loop
+      thresh_mult: -3.5 # threshold Values
+      thresh_calc_len: 2000 # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      enable_CAR: False
+      output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      input_name: nsp_neural_1
+      input_chan_per_stream: *nsp_channels # number of channels
+      input_samp_per_stream: 30 # number of samples per channel per redis entry
+      input_samp_freq: 30000
+      sync_key: sync
+      time_key: ts
+      sync_source_id: nsp_idx_1
+      nsp_channels: *nsp_channels
+      # thresholds_stream: thresholds
+      # thresholds_ch_range: [0,96]
+      # ch_mask_stream: z_mask_stream
+
+  - name: thresholdExtraction
+    nickname: thresh_cross_2
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 6-7
+    redis_outputs:
+      thresh_cross_2: thresh_cross
+    parameters:
+      log: INFO
+      pack_per_call: 1 # number of redis packets to pull per loop
+      thresh_mult: -3.5 # threshold Values
+      thresh_calc_len: 2000 # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      enable_CAR: False
+      output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      input_name: nsp_neural_2
+      input_chan_per_stream: *nsp_channels # number of channels
+      input_samp_per_stream: 30 # number of samples per channel per redis entry
+      input_samp_freq: 30000
+      sync_key: sync
+      time_key: ts
+      sync_source_id: nsp_idx_2
+      nsp_channels: *nsp_channels
+      # thresholds_stream: thresholds
+      # thresholds_ch_range: [96,192]
+      # ch_mask_stream: z_mask_stream
+
+  - name: cerebusAdapter
+    nickname: nsp_in_1
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 4
+    redis_outputs:
+      nsp_neural_1: ContinuousNeural
+    parameters:
+      broadcast_ip: 192.168.137.255
+      broadcast_port: 51002
+      broadcast_device: enp3s0f0
+      num_streams: 1
+      stream_names: [nsp_neural_1]
+      samp_freq: [30000]
+      packet_type: [5]
+      chan_per_stream: [*nsp_channels]
+      samp_per_stream: [30]
+
+  - name: cerebusAdapter
+    nickname: nsp_in_2
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 5
+    redis_outputs:
+      nsp_neural_2: ContinuousNeural
+    parameters:
+      broadcast_ip: 192.168.137.255
+      broadcast_port: 51002
+      broadcast_device: enp4s0f0
+      num_streams: 1
+      stream_names: [nsp_neural_2]
+      samp_freq: [30000]
+      packet_type: [5]
+      chan_per_stream: [*nsp_channels]
+      samp_per_stream: [30]
+
+
+derivatives:
+  - calcThreshNorm:
+      name: calcThreshNorm.py
+      module: ../brand-modules/brand-nsp
+      autorun: True
+      parameters:
+        input_stream_name: ['nsp_neural_1', 'nsp_neural_2']
+        input_stream_key: ['samples', 'samples']
+        filter_first: True
+        reref_group_sizes: 96
+        thresh_mult: -3.5
+        butter_lowercut: 250
+        butter_uppercut: ~
+        ch_mask_stream: z_mask_stream
+        rereference: car
+
+  - saveRDB:
+      name: saveRDB.py
+      module: ../brand-modules/brand-emory
+      autorun: True
+      parameters:
+        flush_streams_before_save: [nsp_neural_1, nsp_neural_2]
+        flush_rdb_after_save: True
+        flush_rdb_except_streams: [thresholds,normalization_parameters,normalize_exit_parameters,z_mask_stream,rereference_parameters]
