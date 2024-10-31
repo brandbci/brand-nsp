@@ -1,0 +1,89 @@
+parameters:
+###########################################
+# general parameters
+###########################################
+- name:           log
+  type:           string
+  default:        INFO
+  description:    Logging level.
+
+- name:           sync_key
+  type:           string
+  default:        sync
+  description:    The key belonging to each entry for tracking data flow through graph execution.
+
+- name:           time_key
+  type:           string
+  default:        ts
+  description:    The key belonging to each entry for storing monotonic clock.
+
+###########################################
+# stream parameters
+###########################################
+- name:           input_stream
+  type:           string
+  description:    The name of the stream containing input data to be normalized.
+
+- name:           input_dtype
+  type:           string
+  description:    The dtype of the data in input_stream.
+
+- name:           input_key
+  type:           string
+  description:    The key within input_stream containing the data to be normalized.
+
+- name:           output_stream
+  type:           string
+  description:    The name of the stream to output normalized data.
+
+###########################################
+# normalization parameters
+###########################################
+- name:           normalization_method
+  type:           string
+  description:    The method to use for normalizing. Currently, z_window is the only option
+
+###########################################
+# z_window parameters
+###########################################
+- name:           bin_period
+  type:           int
+  description:    The period at which new entries are entered into input_stream, in ms.
+
+- name:           normalization_update_period
+  type:           int
+  description:    The period at which to update the normalization parameters, in ms.  Either a normalization_file or both normalization_update_period and normalization_duration are required.
+
+- name:           normalization_duration
+  type:           int
+  description:    The duration over which to compute normalization parameters, in ms.  Either a normalization_file or both normalization_update_period and normalization_duration are required.
+
+- name:           normalization_file
+  type:           string
+  mustExist:      False
+  description:    Path to a CSV file containing normalization parameters. The first row must be means, the second row standard deviations. The dimensionality must equal that of input_stream[input_key].  Either a normalization_file or both normalization_update_period and normalization_duration are required.
+
+RedisStreams:
+  Inputs:
+      ### what should be put in here?
+  Outputs:
+    normalized_binned:
+      enable_nwb:           True
+      type_nwb:             TimeSeries
+      samples:
+        chan_per_stream:    $n_channels
+        samp_per_stream:    1
+        sample_type:        float64
+        nwb:
+          unit:             n/a
+          description:      Normalized input stream
+    denormalized_binned:
+      enable_nwb:           True
+      type_nwb:             TimeSeries
+      samples:
+        chan_per_stream:    $n_channels
+        samp_per_stream:    1
+        sample_type:        float64
+        nwb:
+          unit:             n/a
+          description:      Denormalized input stream
