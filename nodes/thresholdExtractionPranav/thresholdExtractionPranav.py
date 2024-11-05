@@ -16,12 +16,45 @@ import numpy as np
 import scipy.signal
 from brand import BRANDNode
 from brand.redis import xread_count
-from numba import jit
+
+import time
+from collections import defaultdict
+
+class TimingProfiler:
+    def __init__(self):
+        self.timings = defaultdict(list)
+        
+    def record(self, operation, duration):
+        self.timings[operation].append(duration)
+    
+    def get_stats(self):
+        stats = {}
+        for op, times in self.timings.items():
+            stats[op] = {
+                'mean': np.mean(times),
+                'min': np.min(times),
+                'max': np.max(times),
+                'count': len(times)
+            }
+        return stats
+    
+    def print_stats(self):
+        stats = self.get_stats()
+        print("\nTiming Statistics (in milliseconds):")
+        print("-" * 80)
+        print(f"{'Operation':<30} {'Mean':>10} {'Min':>10} {'Max':>10} {'Count':>10}")
+        print("-" * 80)
+        for op, metrics in stats.items():
+            print(f"{op:<30} {metrics['mean']*1000:>10.3f} {metrics['min']*1000:>10.3f} {metrics['max']*1000:>10.3f} {metrics['count']:>10}")
 
 class ThresholdExtraction(BRANDNode):
 
-    def __init__(self):
+    def __init__(self, parameters=None):
         super().__init__()
+        self.profiler = TimingProfiler()
+        tk = time.perf_counter()
+        if parameters:
+            self.parameters =parameters
 
         # threshold multiplier, usually around -5
         self.thresh_mult = self.parameters['thresh_mult']
@@ -58,7 +91,7 @@ class ThresholdExtraction(BRANDNode):
         else:
             self.n_range = np.arange(0, self.n_channels_total)                               
         self.n_range = self.n_range.astype(int)
-        self.n_channels = self.n_range.shape[0]
+        self.n_channels = self.n_range.shape[0] 
 
         # whether to remove coincident spikes
         self.num_coincident = self.parameters['num_coincident_spikes'] if 'num_coincident_spikes' in self.parameters else None
@@ -235,6 +268,8 @@ class ThresholdExtraction(BRANDNode):
             self.thresholds = self.calc_thresh(
                 self.input_stream, self.thresh_mult, self.thresh_calc_len,
                 self.samp_per_stream, self.n_channels, self.sos, self.zi)
+        
+        self.profiler.record('INIT', time.perf_counter() - tk)
 
         # terminate on SIGINT
         signal.signal(signal.SIGINT, self.terminate)
@@ -435,9 +470,10 @@ class ThresholdExtraction(BRANDNode):
             logging.warning(f'{stream} stream has no entries')
             return None
 
-    # @jit(nopython=True)
+
     def run(self):
         # get class variables
+        tc =time.perf_counter()
         if not self.causal:
             rev_win = self.rev_win
             rev_zi = self.rev_zi
@@ -460,7 +496,7 @@ class ThresholdExtraction(BRANDNode):
         samp_times = np.zeros(n_samp, dtype=self.tdtype)
         buffer_len = rev_buffer.shape[1]
         samp_times_buffer = np.zeros(buffer_len, dtype=self.tdtype)
-        buffer_fill = 0  # how many samples have been read into the buffer
+        buffer_fill = 0
 
         # initialize stream entries
         cross_dict = {}
@@ -477,140 +513,156 @@ class ThresholdExtraction(BRANDNode):
 
         # name the filtered output stream
         filt_stream = f'{self.NAME}_filt'
-        while True:
-            # wait to get data from cerebus stream, then parse it
-            xread_receive = self.r.xread(input_stream_dict,
-                                         block=timeout,
-                                         count=pack_per_call)
+        t2 = time.perf_counter()
+        self.profiler.record('INIT time', t2-tc)
+        count=0
+        try:
+            while True:
+                # Profile Redis read
+                t0 = time.perf_counter()
+                t1 = time.perf_counter()
+                if count == 0:
+                    t3 = time.perf_counter()
+                    count=1
+                xread_receive = self.r.xread(input_stream_dict,
+                                            block=timeout,
+                                            count=pack_per_call)
+                self.profiler.record('Redis read', time.perf_counter() - t0)
+                count=0
+                # t1 = time.perf_counter()
+                if len(xread_receive) >= pack_per_call:
+                    # Profile data parsing
+                    t0 = time.perf_counter()
+                    indStart = 0
+                    for entry_id, entry_data in xread_receive[0][1]:
+                        indEnd = indStart + samp_per_stream
+                        # logging.info(f"self.n_channels, n_samp={self.n_channels, n_samp}  \
+                        #               self.n_channels_total, samp_per_stream={self.n_channels_total, samp_per_stream}  \
+                        #               self.n_range={self.n_range} ")
+                        data_buffer[:, indStart:indEnd] =np.reshape(
+                            np.frombuffer(entry_data[b'samples'],
+                                        dtype=self.dtype),
+                            (self.n_channels_total, samp_per_stream))[self.n_range,:]
+                        if self.use_tracking_id:
+                            samp_times[indStart:indEnd] = np.repeat(np.frombuffer(
+                                entry_data[b'tracking_id'], self.tdtype), samp_per_stream)
+                        else:
+                            samp_times[indStart:indEnd] = np.frombuffer(
+                                entry_data[b'timestamps'], self.tdtype)
+                        indStart = indEnd
+                    input_stream_dict[input_stream] = entry_id
+                    self.profiler.record('Data parsing', time.perf_counter() - t0)
 
-            # only run this if we have data
-            if len(xread_receive) >= pack_per_call:
-                indStart = 0
-                # run each entry individually
-                for entry_id, entry_data in xread_receive[0][1]:
-                    indEnd = indStart + samp_per_stream
-                    data_buffer[:, indStart:indEnd] = np.reshape(
-                        np.frombuffer(entry_data[b'samples'],
-                                      dtype=self.dtype),
-                        (self.n_channels_total, samp_per_stream))[self.n_range,:]
-                    if self.use_tracking_id:
-                        samp_times[indStart:indEnd] = np.repeat(np.frombuffer(
-                            entry_data[b'tracking_id'], self.tdtype), samp_per_stream)
+
+
+
+
+
+                    # Profile filtering
+                    t0 = time.perf_counter()
+                    if self.causal:
+                        self.filter_func(data_buffer, filt_buffer, sos, zi,
+                                        self.car_groups)
                     else:
-                        samp_times[indStart:indEnd] = np.frombuffer(
-                            entry_data[b'timestamps'], self.tdtype)
-                    indStart = indEnd
+                        self.filter_func(data_buffer,
+                                        filt_buffer,
+                                        rev_buffer,
+                                        sos=sos,
+                                        zi=zi,
+                                        group_list=self.car_groups,
+                                        rev_win=rev_win,
+                                        rev_zi=rev_zi)
+                    self.profiler.record('Filtering', time.perf_counter() - t0)
 
-                # update key to be the entry number of last item in list
-                input_stream_dict[input_stream] = entry_id
+                    # Profile buffer updates
+                    t0 = time.perf_counter()
+                    if not self.causal:
+                        samp_times_buffer[:-n_samp] = (samp_times_buffer[n_samp:])
+                        samp_times_buffer[-n_samp:] = samp_times
+                    self.profiler.record('Buffer updates', time.perf_counter() - t0)
 
-                # filter the data and find threshold times
-                if self.causal:
-                    self.filter_func(data_buffer, filt_buffer, sos, zi,
-                                     self.car_groups)
-                else:
-                    self.filter_func(data_buffer,
-                                     filt_buffer,
-                                     rev_buffer,
-                                     sos=sos,
-                                     zi=zi,
-                                     group_list=self.car_groups,
-                                     rev_win=rev_win,
-                                     rev_zi=rev_zi)
-                    # update sample time buffer
-                    samp_times_buffer[:-n_samp] = (samp_times_buffer[n_samp:])
-                    samp_times_buffer[-n_samp:] = samp_times
+                    if self.causal:
+                        samp_time_current = samp_times[:n_samp]
+                    else:
+                        samp_time_current = samp_times_buffer[:n_samp]
+                        if buffer_fill + n_samp < buffer_len:
+                            buffer_fill += n_samp
+                            continue
 
-                # find for each channel along the first dimension, keep dims,
-                # pack into a byte object and put into the thresh crossings
-                # dict
-                if self.causal:
-                    samp_time_current = samp_times[:n_samp]
-                else:
-                    samp_time_current = samp_times_buffer[:n_samp]
-                    # check the buffer
-                    if buffer_fill + n_samp < buffer_len:  # buffer is not full
-                        buffer_fill += n_samp  # count the samples added
-                        continue  # skip writing to Redis
+                    # Profile adaptive thresholding
+                    if self.adaptive_thresholds:
+                        t0 = time.perf_counter()
+                        self.mean_squared_new = np.mean(filt_buffer**2, axis=1)
+                        self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[:,self.mean_squared_buffer_index])/self.rms_window_len
+                        self.mean_squared_buffer[:,self.mean_squared_buffer_index] = self.mean_squared_new
+                        self.mean_squared_buffer_index += 1
+                        if self.mean_squared_buffer_index >= self.rms_window_len:
+                            self.mean_squared_buffer_index = 0
+                            self.mean_squared_buffer_full = True
+                        self.root_mean_squared = np.sqrt(self.mean_squared_last)
+                        if self.mean_squared_buffer_full:
+                            self.thresholds = (self.thresh_mult * self.root_mean_squared).reshape(-1,1)
+                            thresholds = self.thresholds
+                        self.profiler.record('Adaptive thresholding', time.perf_counter() - t0)
 
-                # Adaptive spike thresholding
-                if self.adaptive_thresholds:
-                    # Compute MS for samples corresponding to current ms
-                    self.mean_squared_new = np.mean(filt_buffer**2, axis=1)
-                    # Update rolling MS iteratively using new and last stored sample
-                    self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[:,self.mean_squared_buffer_index])/self.rms_window_len
-                    # Store new MS in buffer, overrtiting oldest sample
-                    self.mean_squared_buffer[:,self.mean_squared_buffer_index] = self.mean_squared_new
-                    # Circular buffer
-                    self.mean_squared_buffer_index += 1
-                    if self.mean_squared_buffer_index >= self.rms_window_len:
-                        self.mean_squared_buffer_index = 0
-                        self.mean_squared_buffer_full = True
-                    # Compute RMS
-                    self.root_mean_squared = np.sqrt(self.mean_squared_last)
-                    # If buffer has filled up, update thresholds using rolling RMS
-                    if self.mean_squared_buffer_full:
-                        self.thresholds = (self.thresh_mult * self.root_mean_squared).reshape(-1,1)
-                        thresholds = self.thresholds
+                    # Profile threshold crossing detection
+                    t0 = time.perf_counter()
+                    sync_dict[self.sync_source_id] = int(samp_time_current[0])
+                    cross_dict[self.sync_key] = json.dumps(sync_dict)
+                    cross_dict[b'timestamps'] = samp_time_current[0].tobytes()
+                    crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
+                                        (filt_buffer[:, :-1] >= thresholds))
+                    cross_now = np.any(crossings, axis=1).astype(np.int16)
+                    self.profiler.record('Threshold detection', time.perf_counter() - t0)
 
-                sync_dict[self.sync_source_id] = int(samp_time_current[0])
-                cross_dict[self.sync_key] = json.dumps(sync_dict)
-                cross_dict[b'timestamps'] = samp_time_current[0].tobytes()
-                # is there a threshold crossing in the last ms?
-                crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
-                                    (filt_buffer[:, :-1] >= thresholds))
-                cross_now = np.any(crossings, axis=1).astype(np.int16)
+                    # Profile Redis pipeline operations
+                    t0 = time.perf_counter()
+                    p = self.r.pipeline()
+                    time_now = np.uint64(time.monotonic_ns()).tobytes()
 
-                # Redis
-                p = self.r.pipeline()  # create a new pipeline
+                    tot_spikes = cross_now.sum()
+                    if tot_spikes >= self.num_coincident:
+                        coinc_dict[self.sync_key] = json.dumps(sync_dict)
+                        coinc_dict[b'timestamps'] = samp_time_current[0].tobytes()
+                        coinc_dict[self.time_key] = time_now
+                        coinc_dict[b'crossings'] = cross_now.tobytes()
+                        p.xadd(f'{self.NAME}_coinc', coinc_dict)
+                        cross_now[:] = 0
+                        
+                    cross_dict[b'crossings'] = cross_now.tobytes()
+                    cross_dict[self.time_key] = time_now
+                    p.xadd(self.NAME, cross_dict)
 
-                # log timestamps
-                time_now = np.uint64(time.monotonic_ns()).tobytes()
+                    if output_filtered:
+                        filt_dict[self.sync_key] = json.dumps(sync_dict)
+                        filt_dict[b'timestamps'] = samp_time_current.tobytes()
+                        filt_dict[b'samples'] = filt_buffer.astype(
+                            np.int16).tobytes()
+                        filt_dict[self.time_key] = time_now
+                        p.xadd(filt_stream, filt_dict)
 
-                # coincident spike removal
-                tot_spikes = cross_now.sum()
-                if tot_spikes >= self.num_coincident:
-                    logging.info(f'{tot_spikes} coincident spikes detected, timestamp: {int(samp_time_current[0])}')
-                    coinc_dict[self.sync_key] = json.dumps(sync_dict)
-                    coinc_dict[b'timestamps'] = samp_time_current[0].tobytes()
-                    coinc_dict[self.time_key] = time_now
-                    coinc_dict[b'crossings'] = cross_now.tobytes()
-                    p.xadd(f'{self.NAME}_coinc', coinc_dict)
-                    cross_now[:] = 0
-                    
-                cross_dict[b'crossings'] = cross_now.tobytes()
+                    if self.adaptive_thresholds:
+                        rms_dict[self.sync_key] = json.dumps(sync_dict)  
+                        rms_dict[b'timestamps'] = samp_time_current[0].tobytes()    
+                        rms_dict[b'samples'] = self.root_mean_squared.astype(
+                            np.float64).tobytes()  
+                        rms_dict[b'thresholds'] = thresholds.astype(np.float64).tobytes() 
+                        rms_dict[self.time_key] = time_now   
+                        p.xadd(self.adaptive_rms_stream, rms_dict)             
 
-                # log timestamps
-                cross_dict[self.time_key] = time_now
+                    p.execute()
+                    self.profiler.record('Redis pipeline', time.perf_counter() - t0)
+                    self.profiler.record('Threshold Extraction', time.perf_counter() - t1)
+                    self.profiler.record('Threshold Extraction2', time.perf_counter() - t2)
+                    self.profiler.record('Threshold Extraction3', time.perf_counter() - t3)
+                    t2 = time.perf_counter()
+                elif len(xread_receive) == 0:
+                    logging.warning(f"No neural data received in {timeout} ms")
 
-                # thresholdCrossings stream
-                p.xadd(self.NAME, cross_dict)
-                # filtered data stream
-                if output_filtered:
-                    # if we're storing the filtered data
-                    filt_dict[self.sync_key] = json.dumps(sync_dict)
-                    filt_dict[b'timestamps'] = samp_time_current.tobytes()
-                    filt_dict[b'samples'] = filt_buffer.astype(
-                        np.int16).tobytes()
-                    filt_dict[self.time_key] = time_now
-                    # add the filtered stuff to the pipeline
-                    p.xadd(filt_stream, filt_dict)
-                if self.adaptive_thresholds:
-                    # Update rms_dict for writing to Redis
-                    rms_dict[self.sync_key] = json.dumps(sync_dict)  
-                    rms_dict[b'timestamps'] = samp_time_current[0].tobytes()    
-                    rms_dict[b'samples'] = self.root_mean_squared.astype(
-                        np.float64).tobytes()  
-                    rms_dict[b'thresholds'] = thresholds.astype(np.float64).tobytes() 
-                    rms_dict[self.time_key] = time_now   
-                    p.xadd(self.adaptive_rms_stream, rms_dict)             
-
-                # write to Redis
-                p.execute()
-
-            elif len(xread_receive) == 0:
-                logging.warning("No neural data has been received in the"
-                                f" last {timeout} ms")
+        except KeyboardInterrupt:
+            # Print timing statistics on exit
+            self.profiler.print_stats()
+            raise
 
     # def terminate(self, sig, frame):
     #     if (hasattr(self, 'adaptive_thresholds') and 
