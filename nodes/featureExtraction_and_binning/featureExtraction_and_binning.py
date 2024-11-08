@@ -16,7 +16,7 @@ import numpy as np
 import os
 from brand import BRANDNode
 
-import NeuralFeatureExtractor as nfx
+
 
 class FeatureExtraction_and_binning(BRANDNode):
 
@@ -79,6 +79,14 @@ class FeatureExtraction_and_binning(BRANDNode):
         # get number of loops after which to update the thresholds
         self.threshold_update_loops = self.parameters.get('threshold_update_loops', -1)
 
+        self.use_numba = self.parameters.get('use_numba', True)
+
+        if self.use_numba:
+            import NeuralFeatureExtractor as nfx
+
+        else:
+            import NeuralFeatureExtractor_nonumba as nfx
+ 
         # build filter - non-causal Butterworth filter 
         self.filt_param = {}
         self.filt_param['b'], self.filt_param['a'] = nfx.build_filter(self.parameters['butter_order'], 
@@ -322,6 +330,12 @@ class FeatureExtraction_and_binning(BRANDNode):
         )
 
     def run(self):
+        if self.use_numba:
+            import NeuralFeatureExtractor as nfx
+
+        else:
+            import NeuralFeatureExtractor_nonumba as nfx
+ 
 
         # set timeout
         timeout_ms = 500
