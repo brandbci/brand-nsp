@@ -17,11 +17,41 @@ import os
 from brand import BRANDNode
 
 
+class TimingProfiler:
+    def __init__(self):
+        self.timings = defaultdict(list)
+        
+    def record(self, operation, duration):
+        self.timings[operation].append(duration)
+    
+    def get_stats(self):
+        stats = {}
+        for op, times in self.timings.items():
+            stats[op] = {
+                'mean': np.mean(times),
+                'min': np.min(times),
+                'max': np.max(times),
+                'count': len(times)
+            }
+        return stats
+    
+    def print_stats(self):
+        stats = self.get_stats()
+        print("\nTiming Statistics (in milliseconds):")
+        print("-" * 80)
+        print(f"{'Operation':<30} {'Mean':>10} {'Min':>10} {'Max':>10} {'Count':>10}")
+        print("-" * 80)
+        for op, metrics in stats.items():
+            print(f"{op:<30} {metrics['mean']*1000:>10.3f} {metrics['min']*1000:>10.3f} {metrics['max']*1000:>10.3f} {metrics['count']:>10}")
 
 class FeatureExtraction_and_binning(BRANDNode):
 
-    def __init__(self):
+    def __init__(self, parameters=None):
         super().__init__()
+        self.profiler = TimingProfiler()
+        t_init = time.perf_counter()
+        if parameters:
+            self.parameters =parameters
 
         # Initialise all parameters
         self.parameter_initialization()
@@ -29,6 +59,8 @@ class FeatureExtraction_and_binning(BRANDNode):
         # Variables for maintaining the latest state (supergraph).
         self.current_supergraph_dict = {}
         self.current_supergraph_id = '0-0'
+
+        self.profiler.record('INIT', time.perf_counter() - t_init)
 
         # terminate on SIGINT
         signal.signal(signal.SIGINT, self.terminate)
@@ -330,6 +362,7 @@ class FeatureExtraction_and_binning(BRANDNode):
         )
 
     def run(self):
+        t0 = time.perf_counter()
         if self.use_numba:
             import NeuralFeatureExtractor as nfx
 
@@ -365,6 +398,7 @@ class FeatureExtraction_and_binning(BRANDNode):
         # Initialise binned output stream
         binned_dat_dict = {}     # stream that saves binned threshold crossings and spikeband power along with timestamps and tracking ids
 
+        self.profiler.record('RUN_INIT', time.perf_counter() - t0)
 
         while True: 
             binned_dat_dict[b'loop_start_timestamp'] = np.uint64(time.monotonic_ns()).tobytes()
@@ -386,6 +420,8 @@ class FeatureExtraction_and_binning(BRANDNode):
             # Get data from the input redis stream.
 
             input_entries = []
+            
+            t0 = time.perf_counter()
 
             try_until = time.time() + (timeout_ms / 1000)
             while time.time() < try_until:
@@ -406,6 +442,7 @@ class FeatureExtraction_and_binning(BRANDNode):
                     if len(input_entries) == self.pack_per_call:
                         break
 
+            self.profiler.record('Redis read', time.perf_counter() - t0)
             # only run this if we got input data
             if len(input_entries) == self.pack_per_call:  
                 # --------------- I. Concatenate input entries ------------------------------------

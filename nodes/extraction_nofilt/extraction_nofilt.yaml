@@ -1,0 +1,15 @@
+
+RedisStreams:
+  Inputs:
+      ###
+  Outputs:
+    band_power:
+      enable_nwb:           False
+      type_nwb:             TimeSeries
+      samples:
+        chan_per_stream:    $n_channels
+        samp_per_stream:    1
+        sample_type:        float32
+        nwb:
+          unit:             (0.25uV)^2
+          description:      Power within a frequency band

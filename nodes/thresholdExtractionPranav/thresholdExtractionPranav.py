@@ -572,6 +572,9 @@ class ThresholdExtraction(BRANDNode):
                                         group_list=self.car_groups,
                                         rev_win=rev_win,
                                         rev_zi=rev_zi)
+                        
+                        ans=scipy.signal.sosfiltfilt(sos,rev_buffer,axis=1)
+
                     self.profiler.record('Filtering', time.perf_counter() - t0)
 
                     # Profile buffer updates
