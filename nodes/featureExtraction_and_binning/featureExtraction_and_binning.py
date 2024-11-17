@@ -15,7 +15,7 @@ from glob import glob
 import numpy as np
 import os
 from brand import BRANDNode
-
+from collection import defaultdict
 
 class TimingProfiler:
     def __init__(self):
