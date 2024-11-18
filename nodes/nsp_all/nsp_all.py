@@ -384,7 +384,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
         """
         if demean:
             common_average_reference(data, group_list)
-
+        n_samp = data.shape[1]
         if not sample_num:
             sample_num = 1
             
