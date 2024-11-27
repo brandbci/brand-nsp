@@ -160,7 +160,9 @@ class NSP_all(BRANDNode):
 
 
 
-        self.filter  = helper.get_filt_func()
+        self.filter  = get_filt_func()
+        self.get_threshold_crossing = get_threshold_crossing
+        self.get_spike_bandpower = get_spike_bandpower
 
     def build_filter(self):
             # order of the butterworth filter

@@ -17,13 +17,18 @@ import scipy.signal
 from brand import BRANDNode
 from brand.redis import xread_count
 
-import time
+import os
+from datetime import datetime
 from collections import defaultdict
+import fcntl
 
 class TimingProfiler:
     def __init__(self):
         self.timings = defaultdict(list)
-        
+
+    def set_name(self, name):
+        self.name =name 
+
     def record(self, operation, duration):
         self.timings[operation].append(duration)
     
@@ -39,6 +44,7 @@ class TimingProfiler:
         return stats
     
     def print_stats(self):
+        print(f"\nNode Name:{self.name}")
         stats = self.get_stats()
         print("\nTiming Statistics (in milliseconds):")
         print("-" * 80)
@@ -47,15 +53,94 @@ class TimingProfiler:
         for op, metrics in stats.items():
             print(f"{op:<30} {metrics['mean']*1000:>10.3f} {metrics['min']*1000:>10.3f} {metrics['max']*1000:>10.3f} {metrics['count']:>10}")
 
+    def save_staats(self, directory):
+        os.makedirs(directory, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = os.path.join(directory, f"timing_stats_{self.name}_{timestamp}.log")
+        
+        stats = self.get_stats()
+        with open(filename, 'w') as f:
+            f.write(f"Node Name: {self.name}\n")
+            f.write("\nTiming Statistics (in milliseconds):\n")
+            f.write("-" * 80 + "\n")
+            f.write(f"{'Operation':<30} {'Mean':>10} {'Min':>10} {'Max':>10} {'Count':>10}\n")
+            f.write("-" * 80 + "\n")
+            for op, metrics in stats.items():
+                f.write(f"{op:<30} {metrics['mean']*1000:>10.3f} {metrics['min']*1000:>10.3f} {metrics['max']*1000:>10.3f} {metrics['count']:>10}\n")
+
+
+
+    def save_stats(self, directory, filename='timing_stats.log'):
+        """
+        Save timing statistics to a file with file locking to handle concurrent writes.
+        
+        Args:
+            directory (str): Directory to save the log file
+            filename (str, optional): Name of the log file. Defaults to 'timing_stats.log'
+        """
+        # Ensure the directory exists
+        os.makedirs(directory, exist_ok=True)
+        
+        # Full path to the log file
+        filepath = os.path.join(directory, filename)
+        
+        # Get the current timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Prepare the log entry
+        log_entry = f"\n--- {timestamp} - Node: {self.name} ---\n"
+        log_entry += "-" * 80 + "\n"
+        log_entry += f"{'Operation':<30} {'Mean':>10} {'Min':>10} {'Max':>10} {'Count':>10}\n"
+        log_entry += "-" * 80 + "\n"
+        
+        # Get stats
+        stats = self.get_stats()
+        
+        # Add formatted stats to log entry
+        for op, metrics in stats.items():
+            log_entry += f"{op:<30} {metrics['mean']*1000:>10.3f} {metrics['min']*1000:>10.3f} {metrics['max']*1000:>10.3f} {metrics['count']:>10}\n"
+        
+        # Maximum wait time (in seconds)
+        max_wait_time = 30
+        wait_interval = 0.1
+        total_wait_time = 0
+        
+        while total_wait_time < max_wait_time:
+            try:
+                # Open the file with exclusive lock
+                with open(filepath, 'a') as f:
+                    # Acquire an exclusive lock (blocks until lock is available)
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    
+                    try:
+                        # Write the log entry
+                        f.write(log_entry)
+                        f.flush()  # Ensure data is written to disk
+                        break  # Successfully wrote, exit the loop
+                    
+                    finally:
+                        # Release the lock
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            
+            except IOError:
+                # If file is busy, wait and retry
+                time.sleep(wait_interval)
+                total_wait_time += wait_interval
+        
+        else:
+            # If we've exceeded max wait time
+            raise IOError(f"Could not acquire lock on {filepath} after {max_wait_time} seconds")
+
 class ThresholdExtraction(BRANDNode):
 
     def __init__(self, parameters=None):
         super().__init__()
         self.profiler = TimingProfiler()
-        tk = time.perf_counter()
+
         if parameters:
             self.parameters =parameters
-
+        
+        self.profiler.set_name(self.NAME)
         # threshold multiplier, usually around -5
         self.thresh_mult = self.parameters['thresh_mult']
         # number of Redis packets to read on each iteration
@@ -269,7 +354,6 @@ class ThresholdExtraction(BRANDNode):
                 self.input_stream, self.thresh_mult, self.thresh_calc_len,
                 self.samp_per_stream, self.n_channels, self.sos, self.zi)
         
-        self.profiler.record('INIT', time.perf_counter() - tk)
 
         # terminate on SIGINT
         signal.signal(signal.SIGINT, self.terminate)
@@ -473,7 +557,7 @@ class ThresholdExtraction(BRANDNode):
 
     def run(self):
         # get class variables
-        tc =time.perf_counter()
+        
         if not self.causal:
             rev_win = self.rev_win
             rev_zi = self.rev_zi
@@ -513,26 +597,21 @@ class ThresholdExtraction(BRANDNode):
 
         # name the filtered output stream
         filt_stream = f'{self.NAME}_filt'
-        t2 = time.perf_counter()
-        self.profiler.record('INIT time', t2-tc)
-        count=0
+
         try:
             while True:
                 # Profile Redis read
-                t0 = time.perf_counter()
-                t1 = time.perf_counter()
-                if count == 0:
-                    t3 = time.perf_counter()
-                    count=1
+
+                start_time = time.perf_counter()
+
                 xread_receive = self.r.xread(input_stream_dict,
                                             block=timeout,
                                             count=pack_per_call)
-                self.profiler.record('Redis read', time.perf_counter() - t0)
-                count=0
-                # t1 = time.perf_counter()
+                redis_rd_time = time.perf_counter()
+                
+
                 if len(xread_receive) >= pack_per_call:
                     # Profile data parsing
-                    t0 = time.perf_counter()
                     indStart = 0
                     for entry_id, entry_data in xread_receive[0][1]:
                         indEnd = indStart + samp_per_stream
@@ -551,15 +630,8 @@ class ThresholdExtraction(BRANDNode):
                                 entry_data[b'timestamps'], self.tdtype)
                         indStart = indEnd
                     input_stream_dict[input_stream] = entry_id
-                    self.profiler.record('Data parsing', time.perf_counter() - t0)
+                    data_parsing_time= time.perf_counter() 
 
-
-
-
-
-
-                    # Profile filtering
-                    t0 = time.perf_counter()
                     if self.causal:
                         self.filter_func(data_buffer, filt_buffer, sos, zi,
                                         self.car_groups)
@@ -572,17 +644,13 @@ class ThresholdExtraction(BRANDNode):
                                         group_list=self.car_groups,
                                         rev_win=rev_win,
                                         rev_zi=rev_zi)
-                        
-                        ans=scipy.signal.sosfiltfilt(sos,rev_buffer,axis=1)
+                    
+                    filtering_time = time.perf_counter()
 
-                    self.profiler.record('Filtering', time.perf_counter() - t0)
-
-                    # Profile buffer updates
-                    t0 = time.perf_counter()
                     if not self.causal:
                         samp_times_buffer[:-n_samp] = (samp_times_buffer[n_samp:])
                         samp_times_buffer[-n_samp:] = samp_times
-                    self.profiler.record('Buffer updates', time.perf_counter() - t0)
+
 
                     if self.causal:
                         samp_time_current = samp_times[:n_samp]
@@ -591,10 +659,11 @@ class ThresholdExtraction(BRANDNode):
                         if buffer_fill + n_samp < buffer_len:
                             buffer_fill += n_samp
                             continue
-
+                    
+                    buffering_time =time.perf_counter()
                     # Profile adaptive thresholding
                     if self.adaptive_thresholds:
-                        t0 = time.perf_counter()
+                        # t0 = time.perf_counter()
                         self.mean_squared_new = np.mean(filt_buffer**2, axis=1)
                         self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[:,self.mean_squared_buffer_index])/self.rms_window_len
                         self.mean_squared_buffer[:,self.mean_squared_buffer_index] = self.mean_squared_new
@@ -606,20 +675,19 @@ class ThresholdExtraction(BRANDNode):
                         if self.mean_squared_buffer_full:
                             self.thresholds = (self.thresh_mult * self.root_mean_squared).reshape(-1,1)
                             thresholds = self.thresholds
-                        self.profiler.record('Adaptive thresholding', time.perf_counter() - t0)
+                        # self.profiler.record('Adaptive thresholding', time.perf_counter() - t0)
 
                     # Profile threshold crossing detection
-                    t0 = time.perf_counter()
+
                     sync_dict[self.sync_source_id] = int(samp_time_current[0])
                     cross_dict[self.sync_key] = json.dumps(sync_dict)
                     cross_dict[b'timestamps'] = samp_time_current[0].tobytes()
                     crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                         (filt_buffer[:, :-1] >= thresholds))
                     cross_now = np.any(crossings, axis=1).astype(np.int16)
-                    self.profiler.record('Threshold detection', time.perf_counter() - t0)
+                    thresholding_time = time.perf_counter()
 
-                    # Profile Redis pipeline operations
-                    t0 = time.perf_counter()
+
                     p = self.r.pipeline()
                     time_now = np.uint64(time.monotonic_ns()).tobytes()
 
@@ -654,11 +722,20 @@ class ThresholdExtraction(BRANDNode):
                         p.xadd(self.adaptive_rms_stream, rms_dict)             
 
                     p.execute()
-                    self.profiler.record('Redis pipeline', time.perf_counter() - t0)
-                    self.profiler.record('Threshold Extraction', time.perf_counter() - t1)
-                    self.profiler.record('Threshold Extraction2', time.perf_counter() - t2)
-                    self.profiler.record('Threshold Extraction3', time.perf_counter() - t3)
-                    t2 = time.perf_counter()
+
+                    redis_wt_time = time.perf_counter()
+
+                    if buffer_fill + n_samp >= buffer_len:
+                        self.profiler.record("Redis read", redis_rd_time-start_time)
+                        self.profiler.record("Data parsing", data_parsing_time-redis_rd_time)
+                        self.profiler.record("Filtering data", filtering_time-data_parsing_time)
+                        self.profiler.record("Buffer updates", buffering_time- filtering_time)
+                        self.profiler.record("Threshold detection", thresholding_time-buffering_time)
+                        self.profiler.record("Redis write", redis_wt_time-thresholding_time)
+                        self.profiler.record("Full time", redis_wt_time-start_time)
+                        self.profiler.record("Execution time",thresholding_time-redis_rd_time)
+
+
                 elif len(xread_receive) == 0:
                     logging.warning(f"No neural data received in {timeout} ms")
 
@@ -667,6 +744,16 @@ class ThresholdExtraction(BRANDNode):
             self.profiler.print_stats()
             raise
 
+
+    def terminate(self, sig, frame):
+        logging.info('SIGINT received, Exiting')
+        log_dir = "/home/pdeevi/Projects/emory-cart/brand-modules/brand-nsp/nodes/thresholdExtractionPranav/logs"
+        self.profiler.save_stats(log_dir)
+
+        self.cleanup()
+        self.r.close()
+        gc.collect()
+        sys.exit(0)
     # def terminate(self, sig, frame):
     #     if (hasattr(self, 'adaptive_thresholds') and 
     #             hasattr(self, 'thresholds') and 
