@@ -69,6 +69,7 @@ class NSP_all(BRANDNode):
         self.input_stream_name = self.parameters['input_stream_name']
         self.output_stream_name = self.parameters['output_stream_name']
         self.coefs_stream_name = self.parameters['coefs_stream_name']
+        self.bin_size = self.parameters['bin_size']
         if 'input_dtype' in self.parameters:
             self.input_dtype = self.parameters['input_dtype'] 
         else:
@@ -105,6 +106,30 @@ class NSP_all(BRANDNode):
             self.n_split = self.parameters['n_split'] 
         else:
             self.n_split = 16
+
+
+
+
+        ##### From Threshold extraction
+
+        if 'adaptive_thresholds' in self.parameters:
+            self.adaptive_thresholds = self.parameters['adaptive_thresholds']
+        else:
+            self.adaptive_thresholds = False
+        if self.adaptive_thresholds:
+            self.rms_window_len = self.parameters['adaptive_rms_window_len']
+            self.adaptive_rms_stream = self.parameters['adaptive_rms_stream']
+            self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float64)
+            self.mean_squared_buffer_index = 0
+            self.mean_squared_buffer_full = False
+            self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float64)
+            self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float64)
+            self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float64)
+
+
+
+
+
 
         self.initialize_coefficients()
         self.init_filter_parameters()
@@ -159,10 +184,6 @@ class NSP_all(BRANDNode):
              self.rev_zi) = self.build_filter()
 
 
-
-        self.filter  = get_filt_func()
-        self.get_threshold_crossing = get_threshold_crossing
-        self.get_spike_bandpower = get_spike_bandpower
 
     def build_filter(self):
             # order of the butterworth filter
@@ -252,20 +273,108 @@ class NSP_all(BRANDNode):
 
     def run(self):
 
+        ########################################### INIT ############################################
+
+
+        if not self.causal:
+            rev_win = self.rev_win
+            rev_zi = self.rev_zi
+        input_stream = self.input_stream
+        output_filtered = self.output_filtered
+        pack_per_call = self.pack_per_call
+        samp_per_stream = self.samp_per_stream
+        sos = self.sos
+        thresholds = self.thresholds
+        zi = self.zi
+
+
+
+        # initialize arrays
+        n_samp = samp_per_stream * pack_per_call
+
+        samp_times = np.zeros(n_samp, dtype=self.tdtype)
+        buffer_len = rev_buffer.shape[1]
+        samp_times_buffer = np.zeros(buffer_len, dtype=self.tdtype)
+        buffer_fill = 0  # how many samples have been read into the buffer
+
+
+        neural_data = np.zeros((self.chan_per_stream, self.samp_per_stream), dtype=self.output_dtype)
+        neural_data_reref = np.zeros_like(neural_data)
+
+        filt_buffer =  np.zeros_like(neural_data)
+        rev_buffer = np.zeros(
+            (self.chan_per_stream, self.acausal_filter_lag + n_samp),
+            dtype=np.float32)
+
+        cross_now =     np.zeros(self.chan_per_stream,dtype=np.int16)
+        power_buffer = np.zeros(self.chan_per_stream, dtype=np.float32)
+
+        buffer_num = 0
+        cross_bin_buffer = np.zeros((self.chan_per_stream,self.bin_size), dtype=np.int16)   
+        power_bin_buffer = np.zeros((self.chan_per_stream,self.bin_size), dtype=np.float32)   
+
+        window = np.zeros((self.chan_per_stream*2,self.bin_size), dtype=self.output_dtype)   
+
+
+        # initialize stream entries
+        cross_dict = {}
+        filt_dict = {}
+        rms_dict = {}
+        coinc_dict = {}
+        power_dict = {}
+        sync_dict = {self.sync_source_id: int(samp_times[0])}
+
+    
+        # initialize xread stream dictionary
+        input_stream_dict = {input_stream: '$'}
+
+        # set timeout
+        timeout = 500
+
+        # name the filtered output stream
+        filt_stream = f'{self.NAME}_filt'
+
+
+
+
+
+
+
 
         while True:
 
             ###################################### READ FROM REDIS ######################################
             t0 = time.perf_counter()
             
+            self.replies = self.r.xread({self.input_stream_name: self.input_id}, 
+                                        block=0,
+                                        count=1)
+
+            self.input_id = self.replies[0][1][0][0]
+            self.entry_data = self.replies[0][1][0][1]
             
+            # read timestamps
+            ts = np.concatenate([self.last_ts, np.frombuffer(self.entry_data[self.nsp_ts_field], dtype=self.nsp_ts_dtype).astype(int)])
+            # check if timestamps are in order
+            neg_time_diff = np.diff(ts) < 0
+            if np.any(neg_time_diff):
+                neg_ts = ts[1:][neg_time_diff]
+                logging.warning(f"Timestamps {neg_ts} are not in order!!!")
+            self.last_ts = ts[-1:]
+            
+            neural_data[:] = np.frombuffer(self.entry_data[self.neural_data_field.encode()], 
+                                                dtype=self.input_dtype).reshape((self.chan_per_stream, self.samp_per_stream)).astype(self.output_dtype)
+
+
+
             self.profiler.record('Redis read', time.perf_counter() - t0)
 
 
             ###################################### RE-REFERENCING ######################################
             t0 = time.perf_counter()
 
-            reref_data = self.rereference_func(raw_data)
+            data_buffer = reref_neural_data(self.coefs, neural_data, neural_data_reref, self.n_split)
+
 
             self.profiler.record('Re-referencing', time.perf_counter() - t0)
 
@@ -273,7 +382,34 @@ class NSP_all(BRANDNode):
             ######################################## FILTERING ########################################
             t0 = time.perf_counter()
 
-            filt_buffer = self.filt_func(reref_data)
+            if self.causal:
+                self.filter_func(data_buffer, filt_buffer, sos, zi,
+                                    self.car_groups)
+            else:
+                self.filter_func(data_buffer,
+                                    filt_buffer,
+                                    rev_buffer,
+                                    sos=sos,
+                                    zi=zi,
+                                    group_list=self.car_groups,
+                                    rev_win=rev_win,
+                                    rev_zi=rev_zi)
+
+                samp_times_buffer[:-n_samp] = (samp_times_buffer[n_samp:])
+                samp_times_buffer[-n_samp:] = samp_times
+
+            # find for each channel along the first dimension, keep dims,
+            # pack into a byte object and put into the thresh crossings
+            # dict
+            if self.causal:
+                samp_time_current = samp_times[:n_samp]
+            else:
+                samp_time_current = samp_times_buffer[:n_samp]
+                # check the buffer
+                if buffer_fill + n_samp < buffer_len:  # buffer is not full
+                    buffer_fill += n_samp  # count the samples added
+                    continue  # skip writing to Redis
+
 
 
             self.profiler.record('Filtering', time.perf_counter() - t0)
@@ -282,7 +418,27 @@ class NSP_all(BRANDNode):
             ################################## THRESHOLD CROSSING ####################################
             t0 = time.perf_counter()
 
-            threshold_crossings = self.get_threshold_crossings(filt_buffer, self.thresholds)
+            if self.adaptive_thresholds:
+                # Compute MS for samples corresponding to current ms
+                self.mean_squared_new = np.mean(filt_buffer**2, axis=1)
+                # Update rolling MS iteratively using new and last stored sample
+                self.mean_squared_last += (self.mean_squared_new - self.mean_squared_buffer[:,self.mean_squared_buffer_index])/self.rms_window_len
+                # Store new MS in buffer, overrtiting oldest sample
+                self.mean_squared_buffer[:,self.mean_squared_buffer_index] = self.mean_squared_new
+                # Circular buffer
+                self.mean_squared_buffer_index += 1
+                if self.mean_squared_buffer_index >= self.rms_window_len:
+                    self.mean_squared_buffer_index = 0
+                    self.mean_squared_buffer_full = True
+                # Compute RMS
+                self.root_mean_squared = np.sqrt(self.mean_squared_last)
+                # If buffer has filled up, update thresholds using rolling RMS
+                if self.mean_squared_buffer_full:
+                    self.thresholds = (self.thresh_mult * self.root_mean_squared).reshape(-1,1)
+                    thresholds = self.thresholds
+
+
+            cross_now = get_threshold_crossing(filt_buffer, thresholds, cross_now)
 
             self.profiler.record('Threshold crossing', time.perf_counter() - t0)
 
@@ -290,23 +446,152 @@ class NSP_all(BRANDNode):
             ################################## SPIKE BAND POWER #####################################
             t0 = time.perf_counter()
 
-            spike_band_power = self.get_spike_bandpower(filt_buffer, self.clip_thresh)
+            power_buffer = get_spike_bandpower(filt_buffer, power_buffer, self.logscale)
 
 
             self.profiler.record('Spike band power', time.perf_counter() - t0)
 
+
+
+            ###BUFFER ###############
+
+            cross_bin_buffer[:, buffer_num] = cross_now[:]     
+            power_bin_buffer[:, buffer_num] = power_buffer[:]
+        
+            buffer_num +=1
+
             ###################################### BIN MULTIPLE #####################################
             t0 = time.perf_counter()
 
-            # do the binning 
-            spike_pow_bin = self.bin_data(spike_pow_buffer, bin_type=0)
-            thresh_cross_bin = self.bin_data(thresh_cross_buffer, bin_type=1)
-
+            if self.bin_size == buffer_num:
+                
+                window[:self.chan_per_stream,:] = cross_bin_buffer.sum(axis=1).astype(self.output_dtype)
+                window[self.chan_per_stream:,:] = power_bin_buffer.sum(axis=1).astype(self.output_dtype)
+                
 
             self.profiler.record('Binning', time.perf_counter() - t0)
 
             ###################################### WRITE TO REDIS #####################################
             t0 = time.perf_counter()
+            
+            if self.old_nsp_streams:
+
+                p = self.r.pipeline()  # create a new pipeline
+
+                # log timestamps
+                time_now = np.uint64(time.monotonic_ns()).tobytes()
+
+                #redis write reref
+                for key in self.entry_data.keys():
+                    if key.decode() != self.neural_data_field and key.decode() != self.ts_field:
+                        self.output_dict[key] = self.entry_data[key]
+                    elif key.decode() == self.ts_field:
+                        self.output_dict[self.ts_field] = np.uint64(time.monotonic_ns()).tobytes()
+                    elif key.decode() == self.neural_data_field:
+                        self.output_dict[self.neural_data_field] = self.neural_data_reref.astype(self.output_dtype).tobytes()
+            
+                p.xadd(self.output_stream_name, self.output_dict)
+
+                #redis write crossing
+                
+                # coincident spike removal
+                tot_spikes = cross_now.sum()
+                if tot_spikes >= self.num_coincident:
+                    logging.info(f'{tot_spikes} coincident spikes detected, timestamp: {int(samp_time_current[0])}')
+                    coinc_dict[self.sync_key] = json.dumps(sync_dict)
+                    coinc_dict[b'timestamps'] = samp_time_current[0].tobytes()
+                    coinc_dict[self.time_key] = time_now
+                    coinc_dict[b'crossings'] = cross_now.tobytes()
+                    p.xadd(f'{self.NAME}_coinc', coinc_dict)
+                    cross_now[:] = 0
+                    
+                cross_dict[b'crossings'] = cross_now.tobytes()
+
+                # log timestamps
+                cross_dict[self.time_key] = time_now
+
+                # thresholdCrossings stream
+                p.xadd(self.NAME, cross_dict)
+                # filtered data stream
+                if output_filtered:
+                    # if we're storing the filtered data
+                    filt_dict[self.sync_key] = json.dumps(sync_dict)
+                    filt_dict[b'timestamps'] = samp_time_current.tobytes()
+                    filt_dict[b'samples'] = filt_buffer.astype(
+                        np.int16).tobytes()
+                    filt_dict[self.time_key] = time_now
+                    # add the filtered stuff to the pipeline
+                    p.xadd(filt_stream, filt_dict)
+                if self.adaptive_thresholds:
+                    # Update rms_dict for writing to Redis
+                    rms_dict[self.sync_key] = json.dumps(sync_dict)  
+                    rms_dict[b'timestamps'] = samp_time_current[0].tobytes()    
+                    rms_dict[b'samples'] = self.root_mean_squared.astype(
+                        np.float64).tobytes()  
+                    rms_dict[b'thresholds'] = thresholds.astype(np.float64).tobytes() 
+                    rms_dict[self.time_key] = time_now   
+                    p.xadd(self.adaptive_rms_stream, rms_dict)             
+
+
+
+                #redis write power
+                
+                
+                # filtered data stream
+                # if we're storing the filtered data
+                power_dict[self.sync_key] = json.dumps(sync_dict)
+                power_dict[b'timestamps'] = samp_time_current[0].tobytes()
+                power_dict[b'samples'] = power_buffer.tobytes()
+                power_dict[self.time_key] = time_now
+                # add the filtered stuff to the pipeline
+                p.xadd(power_stream, power_dict)
+
+
+                
+                if self.bin_size == buffer_num:
+                #redis write bin_multiple if self.bin_size
+                    sync_dict = {}
+                    for stream in self.sync_entries:
+                        sync_entry_dict = stream[0]  # first entry from each stream
+                        for key in sync_entry_dict:
+                            sync_dict[key] = sync_entry_dict[key]
+                    sync_dict_json = json.dumps(sync_dict)
+
+                    # write results to Redis
+                    self.output_entry[self.time_key] = np.uint64(
+                        time.monotonic_ns()).tobytes()
+                    self.output_entry[self.sync_key] = sync_dict_json
+                    self.output_entry['samples'] = self.window.sum(axis=1).astype(
+                        self.out_dtype).tobytes()
+                    self.output_entry['i'] = np.uint64(self.i).tobytes()
+
+                    self.r.xadd(self.output_stream, self.output_entry)
+
+                    self.i += 1
+            
+            
+            elif self.bin_size == buffer_num:
+                #redis nested data with common timestamps
+                sync_dict = {}
+                for stream in self.sync_entries:
+                    sync_entry_dict = stream[0]  # first entry from each stream
+                    for key in sync_entry_dict:
+                        sync_dict[key] = sync_entry_dict[key]
+                sync_dict_json = json.dumps(sync_dict)
+
+                # write results to Redis
+                self.output_entry[self.time_key] = np.uint64(
+                    time.monotonic_ns()).tobytes()
+                self.output_entry[self.sync_key] = sync_dict_json
+                self.output_entry['samples'] = self.window.sum(axis=1).astype(
+                    self.out_dtype).tobytes()
+                self.output_entry['i'] = np.uint64(self.i).tobytes()
+
+                self.r.xadd(self.output_stream, self.output_entry)
+
+                self.i += 1
+
+
 
 
             self.profiler.record('Redis write', time.perf_counter() - t0)
@@ -386,7 +671,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
         """
         if demean:
             common_average_reference(data, group_list)
-        n_samp = data.shape[1]
+
         if not sample_num:
             sample_num = 1
             
