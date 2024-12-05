@@ -69,8 +69,68 @@ def get_spike_bandpower(filt_buffer, power_buffer, logscale=False):
 
 
 
+
+
+
+
+def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream,
+                n_channels, sos, zi):
+    reply = xread_count(self.r,
+                        stream=stream,
+                        startid='$',
+                        count=thresh_cal_len,
+                        block=0)
+
+    _, entries = reply[0]  # get the list of entries
+
+    read_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
+                        dtype=np.float32)
+    filt_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
+                        dtype=np.float32)
+    # read_times = np.empty((thresh_cal_len * samp_per_stream))
+
+    i_start = 0
+    for _, entry_data in entries:  # put it all into an array
+        i_end = i_start + samp_per_stream
+        read_arr[:, i_start:i_end] = np.reshape(
+            np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
+            (self.n_channels_total, samp_per_stream))[self.n_range,:]
+        # read_times[i_start:i_end] = np.frombuffer(
+        #     entry_data[b'timestamps'], self.tdtype)
+        i_start = i_end
+
+    if self.causal:
+        self.filter_func(read_arr, filt_arr, sos, zi)
+    else:
+        if self.demean:
+            common_average_reference(read_arr, self.car_groups)
+        filt_arr[:, :] = scipy.signal.sosfiltfilt(sos, read_arr, axis=1)
+
+    thresholds = (thresh_mult *
+                    np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
+                        -1, 1)
+
+    # log thresholds to database
+    thresolds_enc = thresholds.astype(np.int16).tobytes()
+    self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
+
+    logging.info('Calculated and set thresholds')
+    return thresholds
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Filtering functions
-def get_filter_func(causal=False, use_fir=True):
+def get_filter_func(demean, causal=False, use_fir=True):
     """
     Get a function for filtering the data
 
@@ -84,7 +144,7 @@ def get_filter_func(causal=False, use_fir=True):
         Whether to use an FIR filter for the reverse filter (when causal=False)
     """
 
-    def causal_filter(data, filt_data, sos, zi):
+    def causal_filter(data, filt_data, sos, zi, group_list):
         """
         causal filtering
 
@@ -102,7 +162,8 @@ def get_filter_func(causal=False, use_fir=True):
             List of lists of channels grouped together across
             which to compute a common average reference
         """
-
+        if demean:
+            common_average_reference(data, group_list)
         filt_data[:, :], zi[:, :] = scipy.signal.sosfilt(sos,
                                                          data,
                                                          axis=1,
@@ -113,8 +174,10 @@ def get_filter_func(causal=False, use_fir=True):
                        rev_buffer,
                        sos,
                        zi,
+                       group_list,
                        rev_win=None,
-                       rev_zi=None):
+                       rev_zi=None,
+                       sample_num=None):
         """
         acausal filtering
 
@@ -138,6 +201,14 @@ def get_filter_func(causal=False, use_fir=True):
         rev_zi : array-like, optional
             Steady-state conditions of the reverse filter
         """
+        if demean:
+            common_average_reference(data, group_list)
+
+        if not sample_num:
+            sample_num = 1
+            
+        start_idx = -n_samp * sample_num
+        end_idx = None if sample_num == 1 else -n_samp * (sample_num - 1)
 
         # shift the buffer
         n_samp = data.shape[1]
@@ -161,8 +232,25 @@ def get_filter_func(causal=False, use_fir=True):
             filt_data[:, ::-1] = scipy.signal.sosfilt(sos,
                                                       rev_buffer[:, ::-1],
                                                       axis=1,
-                                                      zi=ic)[0][:, -n_samp:]
+                                                      zi=ic)[0][:, start_idx:end_idx]
 
     filter_func = causal_filter if causal else acausal_filter
 
     return filter_func
+
+
+def common_average_reference(data, group_list):
+    """
+    common average reference by group
+
+    Parameters
+    ----------
+    data : array_like
+        An 2-dimensional input array with shape
+        [channel x time]
+    group_list : list
+        List of lists of channels grouped together across
+        which to compute a common average reference
+    """
+    for g in group_list:
+        data[g, :] -= data[g, :].mean(axis=0, keepdims=True)
