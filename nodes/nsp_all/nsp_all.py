@@ -171,6 +171,10 @@ class NSP_all(BRANDNode):
                 self.input_stream, self.thresh_mult, self.thresh_calc_len,
                 self.samp_per_stream, self.n_channels, self.sos, self.zi)
 
+        self.bin_size = self.parameters.setdefault('bin_size', 10)
+
+
+
 
 
 
@@ -593,22 +597,22 @@ class NSP_all(BRANDNode):
         buffer_fill = 0  # how many samples have been read into the buffer
 
 
-        neural_data = np.zeros((self.chan_per_stream, self.samp_per_stream), dtype=self.output_dtype)
+        neural_data = np.zeros((self.n_channels, self.samp_per_stream), dtype=self.output_dtype)
         neural_data_reref = np.zeros_like(neural_data)
 
         filt_buffer =  np.zeros_like(neural_data)
         rev_buffer = np.zeros(
-            (self.chan_per_stream, self.acausal_filter_lag + n_samp),
+            (self.n_channels, self.acausal_filter_lag + n_samp),
             dtype=np.float32)
 
-        cross_now =     np.zeros(self.chan_per_stream,dtype=np.int16)
-        power_buffer = np.zeros(self.chan_per_stream, dtype=np.float32)
+        cross_now =     np.zeros(self.n_channels,dtype=np.int16)
+        power_buffer = np.zeros(self.n_channels, dtype=np.float32)
 
         buffer_num = 0
-        cross_bin_buffer = np.zeros((self.chan_per_stream,self.bin_size), dtype=np.int16)   
-        power_bin_buffer = np.zeros((self.chan_per_stream,self.bin_size), dtype=np.float32)   
+        cross_bin_buffer = np.zeros((self.n_channels,self.bin_size), dtype=np.int16)   
+        power_bin_buffer = np.zeros((self.n_channels,self.bin_size), dtype=np.float32)   
 
-        window = np.zeros((self.chan_per_stream*2,self.bin_size), dtype=self.output_dtype)   
+        window = np.zeros((self.n_channels *2 , self.bin_size), dtype=self.output_dtype)   
 
 
         # initialize stream entries
@@ -628,10 +632,6 @@ class NSP_all(BRANDNode):
 
         # name the filtered output stream
         filt_stream = f'{self.NAME}_filt'
-
-
-
-
 
 
 
