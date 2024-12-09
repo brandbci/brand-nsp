@@ -19,7 +19,7 @@ import time
 
 
 
-@njit('float64[:,:](float64[:,:], float64[:,:], float64[:,:], int32, int32)')
+@njit('float32[:,:](float32[:,:], float32[:,:], float32[:,:], int64)')
 def reref_neural_data(coefs, neural_data, neural_data_reref, n_split):
     n = 0
     while n < neural_data.shape[0]:
@@ -29,12 +29,23 @@ def reref_neural_data(coefs, neural_data, neural_data_reref, n_split):
     return neural_data_reref
 
 
-# @njit('float64[:,:](float64[:,:], float64[:,:])')
-# def numba_dot(A, B):
-#     return np.dot(A, B)
 
 
-@njit('void(float64[:,:], float64[:],int16[:])')
+@njit('int16[:](float32[:,:], float64[:,:],int16[:])')
+def get_threshold_crossing(filt_buffer, thresholds, cross_now):
+    num_channels, buffer_size = filt_buffer.shape
+    # cross_now = np.zeros(num_channels, dtype=np.int16)
+    
+    for i in range(num_channels):
+        threshold = thresholds[i]
+        for j in range(1, buffer_size):
+            if filt_buffer[i, j] < threshold and filt_buffer[i, j-1] >= threshold:
+                cross_now[i] = 1
+                break
+    
+    return cross_now
+
+@njit('int16[:](float32[:,:], float64[:,:],int16[:])')
 def get_threshold_crossing(filt_buffer, thresholds, cross_now):
     num_channels, buffer_size = filt_buffer.shape
     # cross_now = np.zeros(num_channels, dtype=np.int16)
@@ -49,8 +60,7 @@ def get_threshold_crossing(filt_buffer, thresholds, cross_now):
     return cross_now
 
 
-
-@njit('void(float64[:,:], float64[:,:], boolean)')
+@njit('float32[:](float32[:,:], float32[:], boolean)')
 def get_spike_bandpower(filt_buffer, power_buffer, logscale=False):
     num_channels, buffer_size = filt_buffer.shape
     
@@ -129,7 +139,6 @@ def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream,
 
 
 
-# Filtering functions
 def get_filter_func(demean, causal=False, use_fir=True):
     """
     Get a function for filtering the data
@@ -176,8 +185,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
                        zi,
                        group_list,
                        rev_win=None,
-                       rev_zi=None,
-                       sample_num=None):
+                       rev_zi=None):
         """
         acausal filtering
 
@@ -204,12 +212,6 @@ def get_filter_func(demean, causal=False, use_fir=True):
         if demean:
             common_average_reference(data, group_list)
 
-        if not sample_num:
-            sample_num = 1
-            
-        start_idx = -n_samp * sample_num
-        end_idx = None if sample_num == 1 else -n_samp * (sample_num - 1)
-
         # shift the buffer
         n_samp = data.shape[1]
         rev_buffer[:, :-n_samp] = rev_buffer[:, n_samp:]
@@ -232,12 +234,11 @@ def get_filter_func(demean, causal=False, use_fir=True):
             filt_data[:, ::-1] = scipy.signal.sosfilt(sos,
                                                       rev_buffer[:, ::-1],
                                                       axis=1,
-                                                      zi=ic)[0][:, start_idx:end_idx]
+                                                      zi=ic)[0][:, -n_samp:]
 
     filter_func = causal_filter if causal else acausal_filter
 
     return filter_func
-
 
 def common_average_reference(data, group_list):
     """
