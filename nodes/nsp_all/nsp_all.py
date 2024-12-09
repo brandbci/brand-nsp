@@ -254,7 +254,7 @@ class NSP_all(BRANDNode):
         for _, entry_data in entries:  # put it all into an array
             i_end = i_start + samp_per_stream
             read_arr[:, i_start:i_end] = np.reshape(
-                np.frombuffer(entry_data[b"samples"], dtype=self.dtype),
+                np.frombuffer(entry_data[b"samples"], dtype=self.input_dtype),
                 (self.n_channels_total, samp_per_stream),
             )[self.n_range, :]
             # read_times[i_start:i_end] = np.frombuffer(
@@ -716,11 +716,28 @@ class NSP_all(BRANDNode):
                 crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
                 cross_now = np.any(crossings, axis=1).astype(np.int16)
-
+                # cross_now = get_tx0(crossings,filt_buffer,thresholds,cross_now)
                 # cross_now = get_threshold_crossing(filt_buffer, thresholds, cross_now)
 
                 self.profiler.record("Threshold crossing", time.perf_counter() - t0)
 
+
+                t0 = time.perf_counter()
+                cross_now = get_tx0(crossings, filt_buffer, thresholds, cross_now)
+                self.profiler.record("tx0", time.perf_counter() - t0)
+
+                t0 = time.perf_counter()
+                get_tx1(crossings, filt_buffer, thresholds, cross_now)
+                self.profiler.record("tx1", time.perf_counter() - t0)
+
+                t0 = time.perf_counter()
+                cross_now = get_threshold_crossing(filt_buffer, thresholds, cross_now)
+                self.profiler.record("tx2", time.perf_counter() - t0)
+
+                t0 = time.perf_counter()
+                cross_now = get_threshold_crossings(filt_buffer, thresholds)
+                self.profiler.record("tx3", time.perf_counter() - t0)
+                cross_now = cross_now.T
                 ################################## SPIKE BAND POWER #####################################
                 t0 = time.perf_counter()
 
