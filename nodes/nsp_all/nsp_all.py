@@ -643,16 +643,21 @@ class NSP_all(BRANDNode):
                 self.profiler.record("Redis read", time.perf_counter() - t0)
 
                 ###################################### RE-REFERENCING ######################################
+                neural_datak= neural_data.copy()
                 t0 = time.perf_counter()
 
                 # neural_data_reref = reref_neural_data(
                 #     self.coefs, neural_data, neural_data_reref, self.n_split
-                # )
+                # ) # half the time but different method
+
                 n = 0
                 while n < self.chan_per_stream:
                     neural_data_reref[n:n+self.n_split,:] = np.dot(self.coefs[n:n+self.n_split,:], neural_data[:])
                     n += self.n_split
+
                 self.profiler.record("Re-referencing", time.perf_counter() - t0)
+
+
 
                 ######################################## FILTERING ########################################
                 t0 = time.perf_counter()
@@ -712,51 +717,14 @@ class NSP_all(BRANDNode):
                         self.thresholds = (self.thresh_mult * self.root_mean_squared).reshape(-1, 1)
                         thresholds = self.thresholds
 
+                # crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
+                #                                 (filt_buffer[:, :-1] >= thresholds))
+                # cross_now = np.any(crossings, axis=1).astype(np.int16)
 
-                crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
-                                    (filt_buffer[:, :-1] >= thresholds))
-                cross_now = np.any(crossings, axis=1).astype(np.int16)
-                # cross_now = get_tx0(crossings,filt_buffer,thresholds,cross_now)
-                # cross_now = get_threshold_crossing(filt_buffer, thresholds, cross_now)
+                cross_now =get_threshold_crossing(crossings,filt_buffer,thresholds,cross_now) #slightly faster
 
                 self.profiler.record("Threshold crossing", time.perf_counter() - t0)
 
-                cross_now0 =np.zeros_like(cross_now)
-                cross_now1 =np.zeros_like(cross_now)
-                cross_now2 =np.zeros_like(cross_now)
-                cross_now3 =np.zeros_like(cross_now)
-                cross_now4 =np.zeros_like(cross_now)
-                t0 = time.perf_counter()
-                cross_now0 = get_tx0(crossings, filt_buffer, thresholds, cross_now0)
-                self.profiler.record("tx0", time.perf_counter() - t0)
-                t0 = time.perf_counter()
-                cross_now4 = get_tx01(crossings, filt_buffer, thresholds, cross_now4)
-                self.profiler.record("tx01", time.perf_counter() - t0)
-                
-                t0 = time.perf_counter()
-                cross_now1 =get_tx1(crossings, filt_buffer, thresholds, cross_now1)
-                self.profiler.record("tx1", time.perf_counter() - t0)
-
-                t0 = time.perf_counter()
-                cross_now2 = get_tx2(crossings, filt_buffer, thresholds, cross_now2)
-                self.profiler.record("tx2", time.perf_counter() - t0)
-
-
-                t0 = time.perf_counter()
-                cross_now3 = get_tx3(crossings, filt_buffer, thresholds, cross_now3)
-                self.profiler.record("tx3", time.perf_counter() - t0)
-
-                assert np.all(cross_now0==cross_now1),f"{cross_now0.shape} vs {cross_now1.shape}"
-                assert np.all(cross_now0==cross_now2),f"{cross_now0.shape} vs {cross_now2.shape}"
-                assert np.all(cross_now0==cross_now3),f"{cross_now0} \n\nvs {cross_now3}"
-                t0 = time.perf_counter()
-                cross_now = get_threshold_crossing(filt_buffer, thresholds, cross_now)
-                self.profiler.record("tx4", time.perf_counter() - t0)
-
-                t0 = time.perf_counter()
-                cross_now5 = get_threshold_crossings(filt_buffer, thresholds.squeeze())
-                self.profiler.record("tx5", time.perf_counter() - t0)
-                # assert np.all(cross_now0==cross_now5),"messeds"
                 ################################## SPIKE BAND POWER #####################################
                 t0 = time.perf_counter()
 
