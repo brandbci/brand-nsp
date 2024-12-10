@@ -28,6 +28,21 @@ def reref_neural_data(coefs, neural_data, neural_data_reref, n_split):
 
     return neural_data_reref
 
+
+
+@njit(['int16[:](float32[:,:],float32[:,:],float32[:,:],int16[:])',
+       'int16[:](float32[:,:],float32[:,:],float64[:,:],int16[:])'])
+def get_threshold_crossing(crossings,filt_buffer,thresholds,cross_now):                
+
+    crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
+                                    (filt_buffer[:, :-1] >= thresholds))
+    cross_now = (crossings.sum(axis=1)>=1).astype(np.int16)
+    return cross_now
+
+
+
+
+
 def get_tx0(crossings,filt_buffer,thresholds,cross_now):                
 
     crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
@@ -35,11 +50,47 @@ def get_tx0(crossings,filt_buffer,thresholds,cross_now):
     cross_now = np.any(crossings, axis=1).astype(np.int16)
     return cross_now
 
+def get_tx01(crossings,filt_buffer,thresholds,cross_now):                
+
+    crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
+                                    (filt_buffer[:, :-1] >= thresholds))
+    cross_now = (crossings.sum(axis=1)>=1).astype(np.int16)
+    return cross_now
+
+@njit(['int16[:](float32[:,:],float32[:,:],float32[:,:],int16[:])',
+       'int16[:](float32[:,:],float32[:,:],float64[:,:],int16[:])'])
 def get_tx1(crossings,filt_buffer,thresholds,cross_now):                
 
     crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
-    cross_now[:] = np.any(crossings, axis=1).astype(np.int16)
+    cross_now = (crossings.sum(axis=1)>=1).astype(np.int16)
+    return cross_now
+
+
+@njit()
+def get_tx2(crossings,filt_buffer,thresholds,cross_now):                
+
+    crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
+                                    (filt_buffer[:, :-1] >= thresholds))
+    cross_now = (crossings.sum(axis=1)>=1).astype(np.int16)
+    return cross_now
+
+
+
+@njit(['int16[:](float32[:,:],float32[:,:],float32[:,:],int16[:])',
+       'int16[:](float32[:,:],float32[:,:],float64[:,:],int16[:])'])
+def get_tx3(crossings,filt_buffer,thresholds,cross_now):   
+
+    crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
+                                    (filt_buffer[:, :-1] >= thresholds))
+    
+    for i in range(filt_buffer.shape[0]):
+        cross_now[i] = np.int16(np.any(crossings[i,:]))
+
+    return cross_now
+
+
+
 
 
 # @njit('int16[:](float32[:,:], float32[:,:],int16[:])', parallel=True)
@@ -70,10 +121,10 @@ def get_threshold_crossings(dat, thresholds):
     '''
 
     # get bool values for spikes in all channels, optimized for jit
-    min_dat = np.zeros(shape=(dat.shape[-1]), dtype='float32')
-    for ch in range(dat.shape[-1]):                # get min of samples in each channel
+    min_dat = np.zeros(shape=(dat.shape[0]), dtype='float32')
+    for ch in range(dat.shape[0]):                # get min of samples in each channel
         min_dat[ch] = np.min(dat[:,ch])
-    threshold_crossings = min_dat <= thresholds    # If min in a channel is less than a threshold, then it is a spike
+    threshold_crossings = min_dat <= thresholds   # If min in a channel is less than a threshold, then it is a spike
 
     # convert bools to 0 and 1
     threshold_crossings = np.multiply(threshold_crossings,1)
