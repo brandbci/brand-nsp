@@ -147,12 +147,9 @@ class NSP_all(BRANDNode):
         self.initialize_coefficients()
 
         # Get parameters with default values
-        self.output_filtered = self.parameters.setdefault(
-            "output_filtered", False
-        )  # Default: don't export filtered data
-        self.acausal_filter = self.parameters.setdefault(
-            "acausal_filter", True
-        )  # Default: don't use acausal filtering
+        self.output_filtered = self.parameters.setdefault("output_filtered", False) 
+        self.output_reref    = self.parameters.setdefault("output_reref", True) 
+        self.acausal_filter = self.parameters.setdefault("acausal_filter", True)  
         self.causal = not self.acausal_filter  # Derived from acausal_filter
         self.acausal_filter_lag = self.parameters.setdefault(
             "acausal_filter_lag", 120
@@ -180,9 +177,8 @@ class NSP_all(BRANDNode):
         self.pack_per_call = self.parameters.setdefault("pack_per_call", 1)
         self.use_tracking_id = self.parameters.setdefault("use_tracking_id", True)
 
-        self.adaptive_thresholds = self.parameters.setdefault(
-            "adaptive_thresholds", False
-        )
+        self.adaptive_thresholds = self.parameters.setdefault("adaptive_thresholds", False)
+        
         if self.adaptive_thresholds:
             self.rms_window_len = self.parameters["adaptive_rms_window_len"]
             self.mean_squared_buffer = np.zeros(
@@ -643,7 +639,7 @@ class NSP_all(BRANDNode):
                 self.profiler.record("Redis read", time.perf_counter() - t0)
 
                 ###################################### RE-REFERENCING ######################################
-                neural_datak= neural_data.copy()
+
                 t0 = time.perf_counter()
 
                 # neural_data_reref = reref_neural_data(
@@ -756,20 +752,21 @@ class NSP_all(BRANDNode):
                 p = self.r.pipeline() 
                 time_now = np.uint64(time.monotonic_ns()).tobytes()
                 
-                
-                # redis write reref
-                reref_dict = {
-                    k: v for k, v in entry_data.items()
-                }  # deepcopy(self.entry_data)?
+                if self.output_reref:
+                    # redis write reref
+                    reref_dict = {
+                        k: v for k, v in entry_data.items()
+                    }  # deepcopy(self.entry_data)?
 
-                reref_dict[self.reref_ts_key] = time_now
-                reref_dict["samples"] = neural_data_reref.astype(self.output_dtype).tobytes()
-                p.xadd(self.reref_stream, reref_dict, maxlen=self.reref_maxlen, approximate=True)
+                    reref_dict[self.reref_ts_key] = time_now
+                    reref_dict["samples"] = neural_data_reref.astype(self.output_dtype).tobytes()
+                    p.xadd(self.reref_stream, reref_dict, maxlen=self.reref_maxlen, approximate=True)
 
                 # redis write crossing
 
                 # if len(sync_dict_buffer)>self.bin_size:
                 #     sync_dict_buffer[:self.bin_size]=sync_dict_buffer[1:]
+                sync_dict = {self.sync_dict_key: int(samp_time_current[0])}
                 sync_dict_json = json.dumps(sync_dict)
                 sync_dict_buffer.append(sync_dict_json)
 
@@ -834,6 +831,7 @@ class NSP_all(BRANDNode):
                     t_start_bin = time.perf_counter()
                     bin_num += 1
                     buffer_num=0
+                    
                 self.profiler.record("Total Exec Time", time.perf_counter() - t_start_after_redis)
                 p.execute()
                 
