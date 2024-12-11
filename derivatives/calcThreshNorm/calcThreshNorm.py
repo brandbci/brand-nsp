@@ -18,7 +18,7 @@ import sys
 import yaml
 from joblib import Parallel, delayed
 
-from brand.redis import xread_count, RedisLoggingHandler
+from brand.redis import RedisLoggingHandler
 
 from redis import ConnectionError, Redis
 
@@ -265,6 +265,15 @@ if 'decimate' in graph_params:
 else:
     decimate = 1
 
+# amount of data to process in seconds
+if 'data_time_s' in graph_params:
+    data_time_s = graph_params['data_time_s']
+    if data_time_s is not None and (not isinstance(data_time_s, numbers.Number) or data_time_s <= 0):
+        logging.error(f'\'data_time_s\' must be a positive number, but it was {data_time_s}. Exiting')
+        sys.exit(1)
+else:
+    data_time_s = None
+
 # re-reference type
 if 'rereference' in graph_params:
     reref = graph_params['rereference']
@@ -354,6 +363,12 @@ for g_idx in range(len(reref_groups)):
 
 # find how many entries to pull from each stream based on the minimum number of samples across streams
 n_samples = np.min(num_samples)
+if data_time_s is not None:
+    data_time_samples = int(data_time_s * samp_freq)
+    if n_samples < data_time_samples:
+        logging.error(f'Not enough samples in data to process {data_time_s} seconds (only {n_samples} samples available, need {data_time_samples}), exiting')
+        sys.exit(1)
+    n_samples = data_time_samples
 for idx, s in enumerate(stream_info):
     num_entries[idx] = int(np.ceil(n_samples/s['structure']['samp_per_stream']))
 
@@ -364,23 +379,19 @@ if n_samples == 0:
 # preallocate data array
 all_data = np.empty((np.sum(ch_per_stream), n_samples), dtype=np.float64)
 
-logging.info(f'Computing thresholds from {n_samples} samples')
-
 tot_ch = 0
 for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
     this_ch = np.arange(tot_ch, tot_ch+n_ch)
 
-    reply = xread_count(r,
-                        stream=s['name'],
-                        startid='0',
-                        count=n_entries,
-                        block=0)
-
-    _, entries = reply[0]  # get the list of entries
+    entries = r.xrevrange(
+        s['name'],
+        '+',
+        '-',
+        count=n_entries)
 
     i_start = 0
     stream_data = np.empty((n_ch, s['structure']['samp_per_stream']*n_entries), s['structure']['sample_type'])
-    for _, entry_data in entries:  # put it all into an array
+    for _, entry_data in entries[::-1]:  # put it all into an array
         i_end = i_start + s['structure']['samp_per_stream']
         stream_data[:, i_start:i_end] = np.reshape(
             np.frombuffer(entry_data[s['key'].encode()], dtype=s['structure']['sample_type']),
@@ -388,6 +399,8 @@ for s, n_entries, n_ch in zip(stream_info, num_entries, ch_per_stream):
         i_start = i_end
     all_data[this_ch, :] = np.float64(stream_data[:, :n_samples])
     tot_ch += n_ch
+
+logging.info(f'Processing {all_data.shape[1]} samples of data')
 
 # unshuffle data
 all_data = unshuffle_matrix @ all_data
