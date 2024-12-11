@@ -1,6 +1,4 @@
 
-
-
 import numpy as np
 import scipy
 import random
@@ -19,116 +17,27 @@ import time
 
 
 
-@njit('float32[:,:](float32[:,:], float32[:,:], float32[:,:], int64)')
-def reref_neural_data_loop(coefs, neural_data, neural_data_reref, n_split):
-    for i in range(0, neural_data.shape[0], n_split):
-        end_idx = min(i + n_split, neural_data.shape[0])  # Prevent going past array bounds
-        neural_data_reref[i:end_idx,:] = np.dot(coefs[i:end_idx,:], neural_data[:])
-
-    return neural_data_reref
-
-@njit('float32[:,:](float32[:,:], float32[:,:], float32[:,:], int64)')
-def reref_neural_data(coefs, neural_data, neural_data_reref,n_split=0):
-    neural_data_reref[:,:] = np.dot(coefs, neural_data[:])
-
-    return neural_data_reref
-
-
-
-
 @njit(['int16[:](float32[:,:],float32[:,:],float32[:,:],int16[:])',
        'int16[:](float32[:,:],float32[:,:],float64[:,:],int16[:])'])
 def get_threshold_crossing(crossings,filt_buffer,thresholds,cross_now):                
 
     crossings[:, 1:] = ((filt_buffer[:, 1:] < thresholds) &
                                     (filt_buffer[:, :-1] >= thresholds))
-    cross_now = (crossings.sum(axis=1)>=1).astype(np.int16)
+    cross_now = (crossings.sum(axis=1)>=1).astype(np.int16) #original: np.any(crossings, axis=1).astype(np.int16)
     return cross_now
-
-
-
-
-
-
 
 
 @njit('float32[:](float32[:,:], float32[:], boolean)')
 def get_spike_bandpower(filt_buffer, power_buffer, logscale=False):
     num_channels, buffer_size = filt_buffer.shape
     
-    for i in range(num_channels):
-        sum_squared = 0.0
-        for j in range(buffer_size):
-            if logscale:
-                sum_squared += 10* np.log10(filt_buffer[i,j] * filt_buffer[i,j])
-            else:
-                sum_squared += filt_buffer[i,j] * filt_buffer[i,j]
-        
-        mean_power = sum_squared / buffer_size
-        power_buffer[i] = mean_power
+    if logscale:
+        power_buffer[:] = 10 * np.log10(
+            np.square(filt_buffer)).sum(axis=1)/ buffer_size
+    else:
+        power_buffer[:] = np.square(filt_buffer).sum(axis=1)/ buffer_size
     
     return power_buffer
-
-
-
-
-
-
-
-def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream,
-                n_channels, sos, zi):
-    reply = xread_count(self.r,
-                        stream=stream,
-                        startid='$',
-                        count=thresh_cal_len,
-                        block=0)
-
-    _, entries = reply[0]  # get the list of entries
-
-    read_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
-                        dtype=np.float32)
-    filt_arr = np.empty((n_channels, thresh_cal_len * samp_per_stream),
-                        dtype=np.float32)
-    # read_times = np.empty((thresh_cal_len * samp_per_stream))
-
-    i_start = 0
-    for _, entry_data in entries:  # put it all into an array
-        i_end = i_start + samp_per_stream
-        read_arr[:, i_start:i_end] = np.reshape(
-            np.frombuffer(entry_data[b'samples'], dtype=self.dtype),
-            (self.n_channels_total, samp_per_stream))[self.n_range,:]
-        # read_times[i_start:i_end] = np.frombuffer(
-        #     entry_data[b'timestamps'], self.tdtype)
-        i_start = i_end
-
-    if self.causal:
-        self.filter_func(read_arr, filt_arr, sos, zi)
-    else:
-        if self.demean:
-            common_average_reference(read_arr, self.car_groups)
-        filt_arr[:, :] = scipy.signal.sosfiltfilt(sos, read_arr, axis=1)
-
-    thresholds = (thresh_mult *
-                    np.sqrt(np.mean(np.square(filt_arr), axis=1))).reshape(
-                        -1, 1)
-
-    # log thresholds to database
-    thresolds_enc = thresholds.astype(np.int16).tobytes()
-    self.r.xadd(f'{self.NAME}_thresholds', {b'thresholds': thresolds_enc})
-
-    logging.info('Calculated and set thresholds')
-    return thresholds
-
-
-
-
-
-
-
-
-
-
-
 
 
 def get_filter_func(demean, causal=False, use_fir=True):
@@ -247,3 +156,39 @@ def common_average_reference(data, group_list):
     """
     for g in group_list:
         data[g, :] -= data[g, :].mean(axis=0, keepdims=True)
+
+
+
+#actually slower than direct implementation (~0.15ms alone)
+@njit('float32[:,:](float32[:,:], float32[:,:], float32[:,:], int64)')
+def reref_neural_data_loop(coefs, neural_data, neural_data_reref, n_split):
+    for i in range(0, neural_data.shape[0], n_split):
+        end_idx = min(i + n_split, neural_data.shape[0])  # Prevent going past array bounds
+        neural_data_reref[i:end_idx,:] = np.dot(coefs[i:end_idx,:], neural_data[:])
+
+    return neural_data_reref
+
+# fast but very intensive (~0.05ms alone)
+@njit('float32[:,:](float32[:,:], float32[:,:], float32[:,:], int64)')
+def reref_neural_data(coefs, neural_data, neural_data_reref,n_split=0):
+    neural_data_reref[:,:] = np.dot(coefs, neural_data[:])
+
+    return neural_data_reref
+
+#mildly faster than existing implementation but with loops (0.005ms)
+@njit('float32[:](float32[:,:], float32[:], boolean)')
+def get_spike_bandpower_loop(filt_buffer, power_buffer, logscale=False):
+    num_channels, buffer_size = filt_buffer.shape
+    
+    for i in range(num_channels):
+        sum_squared = 0.0
+        for j in range(buffer_size):
+            if logscale:
+                sum_squared += 10* np.log10(filt_buffer[i,j] * filt_buffer[i,j])
+            else:
+                sum_squared += filt_buffer[i,j] * filt_buffer[i,j]
+        
+        mean_power = sum_squared / buffer_size
+        power_buffer[i] = mean_power
+    
+    return power_buffer
