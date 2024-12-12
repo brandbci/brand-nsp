@@ -16,7 +16,7 @@ import numpy as np
 import scipy.signal
 from brand import BRANDNode
 from brand.redis import xread_count
-from numba import jit
+
 
 class ThresholdExtraction(BRANDNode):
 
@@ -435,7 +435,6 @@ class ThresholdExtraction(BRANDNode):
             logging.warning(f'{stream} stream has no entries')
             return None
 
-    # @jit(nopython=True)
     def run(self):
         # get class variables
         if not self.causal:
