@@ -1,20 +1,16 @@
 import gc
 import json
+import yaml
 import logging
 import signal
-import sys
 import time
-from pathlib import Path
-from glob import glob
 from copy import deepcopy
-from brand.redis import xread_count
-from numba import jit
+import scipy
 import numpy as np
-import os
 from brand import BRANDNode
 from collections import defaultdict,deque
 
-from helper import *
+from helper import get_threshold_crossing, get_spike_bandpower, get_filter_func
 
 
 class TimingProfiler:
@@ -117,35 +113,28 @@ class NSP_all(BRANDNode):
         self.power_ts_key = ts_key[bpid]
         self.bin_ts_key = ts_key[bsid]
 
+        self.nsp_ts_field = self.parameters.setdefault("nsp_ts_field", "timestamps").encode()
+        self.nsp_ts_dtype = self.parameters.setdefault("nsp_ts_dtype", "uint64")
+        self.sync_dict_key = self.parameters.setdefault("sync_dict_key", "nsp_idx_1")
 
     def init_params(self):
 
         ###### REREF PARAM INIT ######
-        self.input_stream = self.parameters.setdefault("input_stream", "nsp_neural")
+
         self.input_dtype = self.parameters.setdefault("input_dtype", np.int16)
         self.output_dtype = self.parameters.setdefault("output_dtype", 'float32')
 
         self.samp_freq = self.parameters.setdefault("samp_freq", 30000)
         self.samp_per_stream = self.parameters.setdefault("samp_per_stream", 30)
-
         self.chan_per_stream = self.parameters.setdefault("chan_per_stream", 256)
-        self.n_channels = self.parameters.setdefault("chan_per_stream", 256)
-        self.n_channels_total = self.parameters.setdefault("chan_per_stream", 256)
 
         self.start_chan = self.parameters.setdefault("start_channel", 0)
-        self.end_chan = self.start_chan + self.n_channels
-        self.n_range = np.arange(self.start_chan, self.end_chan,dtype=int)
+        self.end_chan = self.start_chan + self.chan_per_stream
         self.th_chans = range(self.start_chan, self.end_chan)
         self.n_split = self.parameters.setdefault("n_split", 16)
-        
+                
+        self.reref_maxlen = self.parameters.setdefault("reref_maxlen", 2000)
         self.neural_data_field = self.parameters.setdefault("neural_data_field", "samples")
-
-        self.ts_field = self.parameters.setdefault("ts_field", "BRANDS_time")
-        self.nsp_ts_field = self.parameters.setdefault("nsp_ts_field", "timestamps").encode()
-        self.nsp_ts_dtype = self.parameters.setdefault("nsp_ts_dtype", "uint64")
-        self.sync_dict_key = self.parameters.setdefault("sync_dict_key", "nsp_idx_1")
-        self.sync_dict_keys = self.parameters.setdefault("sync_dict_keys", ["nsp_idx_1"])
-
 
         ###### FILTER PARAM INIT ######
         self.initialize_coefficients()
@@ -157,19 +146,9 @@ class NSP_all(BRANDNode):
         self.acausal_filter_lag = self.parameters.setdefault("acausal_filter_lag", 120)  # Default: 120 samples == 4ms lag
 
         self.demean = self.parameters.setdefault("enable_CAR", False)
-        self.initialize_car_groups()
-        self.initialize_ch_mask()
 
-        # keep only masked channels
-        for g_idx in range(len(self.car_groups)):
-            self.car_groups[g_idx] = list(
-                set(self.car_groups[g_idx]).intersection(set(self.ch_mask))
-            )
+        self.filter_func, self.sos, self.zi, self.rev_win, self.rev_zi = self.build_filter()
 
-        if self.causal:
-            self.filter_func, self.sos, self.zi = self.build_filter()
-        else:
-            (self.filter_func, self.sos, self.zi, self.rev_win, self.rev_zi) = (self.build_filter())
 
         ###### THRESH_CROSS PARAM INIT ######
 
@@ -181,17 +160,17 @@ class NSP_all(BRANDNode):
         
         if self.adaptive_thresholds:
             self.rms_window_len = self.parameters["adaptive_rms_window_len"]
-            self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float64)
+            self.mean_squared_buffer = np.zeros((self.chan_per_stream, self.rms_window_len), dtype=np.float64)
             self.mean_squared_buffer_index = 0
             self.mean_squared_buffer_full = False
-            self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float64)
-            self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float64)
-            self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float64)
+            self.mean_squared_last = np.zeros((self.chan_per_stream), dtype=np.float64)
+            self.mean_squared_new = np.zeros((self.chan_per_stream), dtype=np.float64)
+            self.root_mean_squared = np.zeros((self.chan_per_stream), dtype=np.float64)
             logging.info(
                 f"Adaptive spike thresholds enabled, using RMS computed over {self.samp_per_stream*self.rms_window_len} 30kHz samples"
             )
 
-        self.num_coincident = self.parameters.get("num_coincident_spikes", self.n_channels + 1)
+        self.num_coincident = self.parameters.get("num_coincident_spikes", self.chan_per_stream + 1)
 
         thresholds_stream = self.parameters.setdefault("thresholds_stream", "thresholds")
         thresholds_file = self.parameters.setdefault("thresholds_file", None)
@@ -204,68 +183,17 @@ class NSP_all(BRANDNode):
             self.thresholds = self.load_thresholds_from_file(thresholds_file)
 
         if self.thresholds is None:
-            # amount of data to use for threshold calculation
-            self.thresh_calc_len = self.parameters.setdefault("thresh_calc_len", 2000)  # 2s worth of data by default
-            self.thresholds = self.calc_thresh(
-                self.input_stream,
-                self.thresh_mult,
-                self.thresh_calc_len,
-                self.samp_per_stream,
-                self.n_channels,
-                self.sos,
-                self.zi,
-            )
+            logging.error(f"Thresholds not found in stream={thresholds_stream} or file={thresholds_file}. Exiting...")
+            signal.signal(signal.SIGINT, self.terminate)
 
         self.logscale = self.parameters.setdefault("bandpower_logscale", False)
-        self.reref_maxlen = self.parameters.setdefault("reref_maxlen", 2000)
+        self.reduce_sbp = getattr(np, self.parameters.setdefault("sbp_reduction_fn", "mean")) 
+
         self.bin_size = self.parameters.setdefault("bin_size", 10)
         self.bin_enable = self.parameters.setdefault("bin_enable", True)
 
         self.enable_profiler = self.parameters.setdefault("enable_profiler", False)
 
-    def calc_thresh(self, stream, thresh_mult, thresh_cal_len, samp_per_stream, n_channels, sos, zi):
-        reply = xread_count(
-            self.r, stream=stream, startid="$", count=thresh_cal_len, block=0
-        )
-
-        _, entries = reply[0]  # get the list of entries
-
-        read_arr = np.empty(
-            (n_channels, thresh_cal_len * samp_per_stream), dtype=np.float32
-        )
-        filt_arr = np.empty(
-            (n_channels, thresh_cal_len * samp_per_stream), dtype=np.float32
-        )
-        # read_times = np.empty((thresh_cal_len * samp_per_stream))
-
-        i_start = 0
-        for _, entry_data in entries:  # put it all into an array
-            i_end = i_start + samp_per_stream
-            read_arr[:, i_start:i_end] = np.reshape(
-                np.frombuffer(entry_data[b"samples"], dtype=self.input_dtype),
-                (self.n_channels_total, samp_per_stream),
-            )[self.n_range, :]
-            # read_times[i_start:i_end] = np.frombuffer(
-            #     entry_data[b'timestamps'], self.td_type)
-            i_start = i_end
-
-        if self.causal:
-            self.filter_func(read_arr, filt_arr, sos, zi)
-        else:
-            if self.demean:
-                common_average_reference(read_arr, self.car_groups)
-            filt_arr[:, :] = scipy.signal.sosfiltfilt(sos, read_arr, axis=1)
-
-        thresholds = (
-            thresh_mult * np.sqrt(np.mean(np.square(filt_arr), axis=1))
-        ).reshape(-1, 1)
-
-        # log thresholds to database
-        thresolds_enc = thresholds.astype(np.int16).tobytes()
-        self.r.xadd(f"{self.NAME}_thresholds", {b"thresholds": thresolds_enc})
-
-        logging.info("Calculated and set thresholds")
-        return thresholds
 
     def load_thresholds_from_file(self, thresholds_file):
         tf_chans = self.th_chans
@@ -274,14 +202,14 @@ class NSP_all(BRANDNode):
                 thresh_yaml = yaml.safe_load(f)
             if "thresholds" in thresh_yaml:
                 if tf_chans is None:
-                    if len(thresh_yaml["thresholds"]) == self.n_channels_total:
+                    if len(thresh_yaml["thresholds"]) == self.chan_per_stream:
                         logging.info(f"Loaded thresholds from {thresholds_file}")
                         return np.array(thresh_yaml["thresholds"]).reshape(-1, 1)
                     else:
                         raise ValueError(
                             f"Number of thresholds in {thresholds_file} "
                             f'({len(thresh_yaml["thresholds"])}) does not '
-                            f"equal n_channels parameter {(self.n_channels_total)}"
+                            f"equal chan_per_stream parameter {(self.chan_per_stream)}"
                         )
                 # if all of our requested channels are in the available range
                 # of channels
@@ -311,14 +239,14 @@ class NSP_all(BRANDNode):
         if entry:
             thresholds = np.frombuffer(entry[0][1][b"thresholds"], dtype=np.float64)
             if th_chans is None:
-                if len(thresholds) == self.n_channels_total:
+                if len(thresholds) == self.chan_per_stream:
                     logging.info(f"Loaded thresholds from the {stream} stream")
                     return thresholds.reshape(-1, 1)
                 else:
                     raise ValueError(
                         f"Number of thresholds in the {stream} stream "
-                        f"({len(thresholds)}) does not equal n_channels "
-                        f"parameter {(self.n_channels_total)}"
+                        f"({len(thresholds)}) does not equal chan_per_stream "
+                        f"parameter {(self.chan_per_stream)}"
                     )
             # if all of our requested channels are in the available range of
             # channels
@@ -348,29 +276,29 @@ class NSP_all(BRANDNode):
 
             self.coefs_all = np.frombuffer(
                 entry_dict[b"channel_scaling"], dtype=np.float64
-            ).reshape((self.n_channels_total, self.n_channels_total))
+            ).reshape((self.chan_per_stream, self.chan_per_stream))
             self.coefs = self.coefs_all[
                 self.start_chan : self.start_chan + self.chan_per_stream,
                 self.start_chan : self.start_chan + self.chan_per_stream,
             ]
 
             if b"channel_unshuffling" in entry_dict:
-                self.unshuffle_all = np.frombuffer(
+                unshuffle_all = np.frombuffer(
                     entry_dict[b"channel_unshuffling"], dtype=np.float64
-                ).reshape((self.n_channels_total, self.n_channels_total))
+                ).reshape((self.chan_per_stream, self.chan_per_stream))
                 logging.info(f"Unshuffling matrix loaded from stream.")
             else:
-                self.unshuffle_all = np.eye(self.n_channels_total, dtype=np.float64)
+                unshuffle_all = np.eye(self.chan_per_stream, dtype=np.float64)
                 logging.info(
                     f"No unshuffling matrix found. Assuming channels are in order."
                 )
 
-            self.unshuffle = self.unshuffle_all[
+            unshuffle = unshuffle_all[
                 self.start_chan : self.start_chan + self.chan_per_stream,
                 self.start_chan : self.start_chan + self.chan_per_stream,
             ]
 
-            self.coefs = (np.eye(self.chan_per_stream) - self.coefs) @ self.unshuffle
+            self.coefs = (np.eye(self.chan_per_stream) - self.coefs) @ unshuffle
             self.coefs = self.coefs.astype(self.output_dtype)
 
         else:
@@ -385,80 +313,6 @@ class NSP_all(BRANDNode):
             )
             self.coefs.astype(self.parameters["output_dtype"])
 
-    def initialize_car_groups(self):
-        if self.demean and "CAR_group_sizes" in self.parameters:
-            car_sizes = self.parameters["CAR_group_sizes"]
-            if not isinstance(car_sizes, list):
-                if isinstance(car_sizes, int):
-                    car_sizes = []
-                    ch_count = deepcopy(self.n_channels)
-
-                    # get CAR group sizes of the specified size, until we run
-                    # out of channels for the stream
-                    while ch_count > 0:
-                        car_sizes.append(
-                            min([self.parameters["CAR_group_sizes"], ch_count])
-                        )
-                        ch_count -= self.parameters["CAR_group_sizes"]
-
-            self.car_groups = []
-            ch_count = 0
-            for g in car_sizes:
-                if not isinstance(g, int):
-                    raise ValueError(
-                        "'CAR_group_sizes' must be a list of 'int's or a "
-                        "single 'int', but "
-                        f'{self.parameters["CAR_group_sizes"]} was given'
-                    )
-                self.car_groups.append(np.arange(ch_count, ch_count + g).tolist())
-                ch_count += g
-        else:
-            self.car_groups = [np.arange(0, self.n_channels).tolist()]
-
-        if "exclude_channels" in self.parameters:
-            exclude_ch = self.parameters["exclude_channels"]
-            if not isinstance(exclude_ch, list):
-                if isinstance(exclude_ch, int):
-                    exclude_ch = [exclude_ch]
-            for c in exclude_ch:
-                if not isinstance(c, int):
-                    raise ValueError(
-                        "'exclude_channels' must be a list of 'int's or"
-                        " a single 'int', but "
-                        f'{self.parameters["exclude_channels"]} was given.'
-                        " Exiting"
-                    )
-            for c in exclude_ch:
-                for g in self.car_groups:
-                    if c in g:
-                        g.remove(c)
-
-    def initialize_ch_mask(self):
-        if "ch_mask_stream" in self.parameters:
-            ch_mask_entry = self.r.xrevrange(
-                self.parameters["ch_mask_stream"], "+", "-", count=1
-            )
-            if ch_mask_entry:
-                self.ch_mask = np.frombuffer(
-                    ch_mask_entry[0][1][b"channels"], dtype=np.uint16
-                )
-                if self.th_chans is None:
-                    logging.warning(
-                        f"'ch_mask_stream' was provided but 'thresholds_ch_range' was not, so the incorrect channels may be masked"
-                    )
-                else:
-                    self.ch_mask = np.array(
-                        list(set(self.ch_mask).intersection(set(self.th_chans)))
-                    )
-                    self.ch_mask -= self.th_chans[0]
-            else:
-                logging.warning(
-                    f'\'ch_mask_stream\' was set to {self.parameters["ch_mask_stream"]}, but there were no entries. Defaulting to using all channels'
-                )
-                self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
-        else:
-            self.ch_mask = np.arange(self.n_channels, dtype=np.uint16)
-
     def build_filter(self):
 
         but_order = self.parameters.get("butter_order", 4)
@@ -468,6 +322,8 @@ class NSP_all(BRANDNode):
         acausal_filter = self.acausal_filter
         causal = self.causal
         fs = self.samp_freq
+
+        rev_win, rev_zi = None, None
 
         # determine filter type
         if but_low and but_high:
@@ -489,9 +345,9 @@ class NSP_all(BRANDNode):
         # initialize the state of the filter
         zi_flat = scipy.signal.sosfilt_zi(sos)
         # so that we have the right number of dimensions
-        zi = np.zeros((zi_flat.shape[0], self.n_channels, zi_flat.shape[1]))
+        zi = np.zeros((zi_flat.shape[0], self.chan_per_stream, zi_flat.shape[1]))
         # filter initialization
-        for ii in range(self.n_channels):
+        for ii in range(self.chan_per_stream):
             zi[:, ii, :] = zi_flat
 
         # select the filtering function
@@ -499,7 +355,7 @@ class NSP_all(BRANDNode):
             use_fir = True
         else:
             use_fir = False
-        filter_func = get_filter_func(self.demean, causal, use_fir=use_fir)
+        filter_func = get_filter_func( causal, use_fir=use_fir)
 
         # log the filter info
         causal_str = "causal" if causal else "acausal"
@@ -521,17 +377,15 @@ class NSP_all(BRANDNode):
                 rev_win = scipy.signal.sosfilt(sos, imp)
                 # filter initialization
                 rev_zi_flat = scipy.signal.lfilter_zi(rev_win, 1.0)
-                rev_zi = np.zeros((self.n_channels, rev_zi_flat.shape[0]))
-                for ii in range(self.n_channels):
+                rev_zi = np.zeros((self.chan_per_stream, rev_zi_flat.shape[0]))
+                for ii in range(self.chan_per_stream):
                     rev_zi[ii, :] = rev_zi_flat
             else:
                 rev_win = None
                 rev_zi = zi.copy()
 
-        if causal:
-            return filter_func, sos, zi
-        else:
-            return filter_func, sos, zi, rev_win, rev_zi
+        return filter_func, sos, zi, rev_win, rev_zi
+
 
     def run(self):
         def time_now():
@@ -539,9 +393,8 @@ class NSP_all(BRANDNode):
 
         ########################################### INIT ###########################################
 
-        if not self.causal:
-            rev_win = self.rev_win
-            rev_zi = self.rev_zi
+        rev_win = self.rev_win
+        rev_zi = self.rev_zi
 
         pack_per_call = self.pack_per_call
         samp_per_stream = self.samp_per_stream
@@ -555,24 +408,24 @@ class NSP_all(BRANDNode):
 
         buffer_fill = 0  # how many samples have been read into the buffer
 
-        neural_data = np.zeros( (self.n_channels, self.samp_per_stream), dtype=self.output_dtype)
+        neural_data = np.zeros( (self.chan_per_stream, n_samp), dtype=self.output_dtype)
         neural_data_reref = np.zeros_like(neural_data)
 
         filt_buffer = np.zeros_like(neural_data)
-        rev_buffer = np.zeros((self.n_channels, self.acausal_filter_lag + n_samp), dtype=np.float32)
+        rev_buffer = np.zeros((self.chan_per_stream, self.acausal_filter_lag + n_samp), dtype=np.float32)
         samp_times = np.zeros(n_samp, dtype=self.td_type)
         buffer_len = rev_buffer.shape[1]
         samp_times_buffer = np.zeros(buffer_len, dtype=self.td_type)
         
         crossings = np.zeros_like(neural_data_reref)
-        cross_now = np.zeros(self.n_channels, dtype=np.int16)
-        power_buffer = np.zeros(self.n_channels, dtype=np.float32)
+        cross_now = np.zeros(self.chan_per_stream, dtype=np.int16)
+        power_buffer = np.zeros(self.chan_per_stream, dtype=np.float32)
 
         # init buffers fro binning
-        cross_bin_buffer = np.zeros((self.n_channels, self.bin_size), dtype=np.int16)
-        power_bin_buffer = np.zeros((self.n_channels, self.bin_size), dtype=np.float32)
+        cross_bin_buffer = np.zeros((self.chan_per_stream, self.bin_size), dtype=np.int16)
+        power_bin_buffer = np.zeros((self.chan_per_stream, self.bin_size), dtype=np.float32)
 
-        window = np.zeros((self.n_channels * 2, self.bin_size), dtype=self.output_dtype)
+        binned_spikes = np.zeros((self.chan_per_stream * 2), dtype=self.output_dtype)
 
         # initialize stream entries
 
@@ -594,17 +447,17 @@ class NSP_all(BRANDNode):
         buffer_num = 0
         input_id ='$'
         t_start_bin =0
+
         while True:
-            
+
             ########################################### READ FROM REDIS ###########################################
-            
-            
+
             t0 = time.perf_counter()
             t_start =time.perf_counter()
             xread_receive = self.r.xread(
                 {self.input_stream: input_id}, block=timeout, count=1
             )
-            
+
             if len(xread_receive) >= pack_per_call:
                 t_start_after_redis =time.perf_counter()
                 input_id = xread_receive[0][1][0][0]
@@ -655,7 +508,7 @@ class NSP_all(BRANDNode):
 
                 if self.causal:
                     self.filter_func(
-                        neural_data_reref, filt_buffer, sos, zi, self.car_groups
+                        neural_data_reref, filt_buffer, sos, zi
                     )
                 else:
                     self.filter_func(
@@ -664,7 +517,6 @@ class NSP_all(BRANDNode):
                         rev_buffer,
                         sos=sos,
                         zi=zi,
-                        group_list=self.car_groups,
                         rev_win=rev_win,
                         rev_zi=rev_zi,
                     )
@@ -738,8 +590,8 @@ class NSP_all(BRANDNode):
                 if self.bin_enable and self.bin_size == buffer_num:
                     t0 = time.perf_counter()
 
-                    window[: self.chan_per_stream, :] = cross_bin_buffer
-                    window[self.chan_per_stream :, :] = power_bin_buffer
+                    binned_spikes[: self.chan_per_stream] = np.sum(cross_bin_buffer,axis=1)
+                    binned_spikes[self.chan_per_stream :] = self.reduce_sbp(power_bin_buffer,axis=1)
                     
                     bin_dict[self.bin_ts_key] = time_now()
                     self.profiler.record("Binning", time.perf_counter() - t0)
@@ -755,7 +607,8 @@ class NSP_all(BRANDNode):
                 # write reref_neural if enabled
                 if self.output_reref:
                     reref_dict = {k: v for k, v in entry_data.items()}  
-                    reref_dict["samples"] = neural_data_reref.astype(self.output_dtype).tobytes()
+                    reref_dict[self.reref_ts_key] = time_now()
+                    reref_dict[self.neural_data_field] = neural_data_reref.astype(self.output_dtype).tobytes()
                     p.xadd(self.reref_stream, reref_dict, maxlen=self.reref_maxlen, approximate=True)
 
                 # sync_dict wrt (default:nsp_idx_1)
@@ -808,7 +661,7 @@ class NSP_all(BRANDNode):
 
                     bin_dict[self.bin_sync_key] = deepcopy(sync_dict_buffer[0])
                     bin_dict[b"timestamps"] = samp_time_current[0].tobytes()
-                    bin_dict[b"samples"] = (window.sum(axis=1).astype(self.output_dtype).tobytes())
+                    bin_dict[b"samples"] = (binned_spikes.astype(self.output_dtype).tobytes())
                     bin_dict["i"] = np.uint64(bin_num).tobytes()
                     p.xadd(self.bin_stream, bin_dict)
 

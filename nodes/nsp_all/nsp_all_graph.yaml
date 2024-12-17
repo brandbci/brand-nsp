@@ -73,6 +73,7 @@ nodes:
       acausal_filter: IIR
       ch_mask_stream: z_mask_stream
       bandpower_logscale: False
+      sbp_reduction_fn: mean # can be mean or sum
       chan_per_stream: *nsp_channels
       samp_per_stream: 30
       chan_total: *nsp_channels

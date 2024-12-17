@@ -1,18 +1,10 @@
 
 import numpy as np
 import scipy
-import random
 import scipy.ndimage
 import scipy.signal
 import scipy.io
-import json
-import json
-import yaml
-import pickle
-import sys
-import numpy as np
-from numba import jit, njit, float64, boolean, int16, int32, prange
-import time
+from numba import njit
 
 
 
@@ -29,7 +21,7 @@ def get_threshold_crossing(crossings,filt_buffer,thresholds,cross_now):
 
 @njit('float32[:](float32[:,:], float32[:], boolean)')
 def get_spike_bandpower(filt_buffer, power_buffer, logscale=False):
-    num_channels, buffer_size = filt_buffer.shape
+    _, buffer_size = filt_buffer.shape
     
     if logscale:
         power_buffer[:] = 10 * np.log10(
@@ -40,7 +32,7 @@ def get_spike_bandpower(filt_buffer, power_buffer, logscale=False):
     return power_buffer
 
 
-def get_filter_func(demean, causal=False, use_fir=True):
+def get_filter_func(causal=False, use_fir=True):
     """
     Get a function for filtering the data
 
@@ -54,7 +46,7 @@ def get_filter_func(demean, causal=False, use_fir=True):
         Whether to use an FIR filter for the reverse filter (when causal=False)
     """
 
-    def causal_filter(data, filt_data, sos, zi, group_list):
+    def causal_filter(data, filt_data, sos, zi):
         """
         causal filtering
 
@@ -68,12 +60,8 @@ def get_filter_func(demean, causal=False, use_fir=True):
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
-        group_list : list
-            List of lists of channels grouped together across
-            which to compute a common average reference
         """
-        if demean:
-            common_average_reference(data, group_list)
+
         filt_data[:, :], zi[:, :] = scipy.signal.sosfilt(sos,
                                                          data,
                                                          axis=1,
@@ -84,7 +72,6 @@ def get_filter_func(demean, causal=False, use_fir=True):
                        rev_buffer,
                        sos,
                        zi,
-                       group_list,
                        rev_win=None,
                        rev_zi=None):
         """
@@ -102,16 +89,11 @@ def get_filter_func(demean, causal=False, use_fir=True):
             Array of second-order filter coefficients
         zi : array_like
             Initial conditions for the cascaded filter delays
-        group_list : list
-            List of lists of channels grouped together across
-            which to compute a common average reference
         rev_win : array-like, optional
             Coefficients of the reverse FIR filter
         rev_zi : array-like, optional
             Steady-state conditions of the reverse filter
         """
-        if demean:
-            common_average_reference(data, group_list)
 
         # shift the buffer
         n_samp = data.shape[1]
@@ -171,6 +153,7 @@ def reref_neural_data_loop(coefs, neural_data, neural_data_reref, n_split):
 # fast but very intensive (~0.05ms alone)
 @njit('float32[:,:](float32[:,:], float32[:,:], float32[:,:], int64)')
 def reref_neural_data(coefs, neural_data, neural_data_reref,n_split=0):
+    n_split=0
     neural_data_reref[:,:] = np.dot(coefs, neural_data[:])
 
     return neural_data_reref
