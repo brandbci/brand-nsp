@@ -398,6 +398,8 @@ class NSP_all(BRANDNode):
 
         pack_per_call = self.pack_per_call
         samp_per_stream = self.samp_per_stream
+        chan_per_stream = self.chan_per_stream
+
         sos = self.sos
         thresholds = self.thresholds
         zi = self.zi
@@ -408,24 +410,24 @@ class NSP_all(BRANDNode):
 
         buffer_fill = 0  # how many samples have been read into the buffer
 
-        neural_data = np.zeros( (self.chan_per_stream, n_samp), dtype=self.output_dtype)
+        neural_data = np.zeros( (chan_per_stream, n_samp), dtype=self.output_dtype)
         neural_data_reref = np.zeros_like(neural_data)
 
         filt_buffer = np.zeros_like(neural_data)
-        rev_buffer = np.zeros((self.chan_per_stream, self.acausal_filter_lag + n_samp), dtype=np.float32)
+        rev_buffer = np.zeros((chan_per_stream, self.acausal_filter_lag + n_samp), dtype=np.float32)
         samp_times = np.zeros(n_samp, dtype=self.td_type)
         buffer_len = rev_buffer.shape[1]
         samp_times_buffer = np.zeros(buffer_len, dtype=self.td_type)
         
         crossings = np.zeros_like(neural_data_reref)
-        cross_now = np.zeros(self.chan_per_stream, dtype=np.int16)
-        power_buffer = np.zeros(self.chan_per_stream, dtype=np.float32)
+        cross_now = np.zeros(chan_per_stream, dtype=np.int16)
+        power_buffer = np.zeros(chan_per_stream, dtype=np.float32)
 
         # init buffers fro binning
-        cross_bin_buffer = np.zeros((self.chan_per_stream, self.bin_size), dtype=np.int16)
-        power_bin_buffer = np.zeros((self.chan_per_stream, self.bin_size), dtype=np.float32)
+        cross_bin_buffer = np.zeros((chan_per_stream, self.bin_size), dtype=np.int16)
+        power_bin_buffer = np.zeros((chan_per_stream, self.bin_size), dtype=np.float32)
 
-        binned_spikes = np.zeros((self.chan_per_stream * 2), dtype=self.output_dtype)
+        binned_spikes = np.zeros((chan_per_stream * 2), dtype=self.output_dtype)
 
         # initialize stream entries
 
@@ -475,12 +477,12 @@ class NSP_all(BRANDNode):
 
                 neural_data[:] = (
                     np.frombuffer(entry_data[self.neural_data_field.encode()], dtype=self.input_dtype)
-                    .reshape((self.chan_per_stream, self.samp_per_stream))
+                    .reshape((chan_per_stream, n_samp))
                     .astype(self.output_dtype)
                 )
                 if self.use_tracking_id:
                     samp_times[:] = np.repeat(
-                        np.frombuffer(entry_data[b"tracking_id"], self.td_type), self.samp_per_stream,)
+                        np.frombuffer(entry_data[b"tracking_id"], self.td_type), samp_per_stream)
                 else:
                     samp_times[:] = np.frombuffer(entry_data[b"timestamps"], self.td_type)
 
@@ -493,7 +495,7 @@ class NSP_all(BRANDNode):
                 t0 = time.perf_counter()
 
                 n = 0
-                while n < self.chan_per_stream:
+                while n < chan_per_stream:
                     neural_data_reref[n:n+self.n_split,:] = np.dot(self.coefs[n:n+self.n_split,:], neural_data[:])
                     n += self.n_split
 
@@ -590,8 +592,8 @@ class NSP_all(BRANDNode):
                 if self.bin_enable and self.bin_size == buffer_num:
                     t0 = time.perf_counter()
 
-                    binned_spikes[: self.chan_per_stream] = np.sum(cross_bin_buffer,axis=1)
-                    binned_spikes[self.chan_per_stream :] = self.reduce_sbp(power_bin_buffer,axis=1)
+                    binned_spikes[: chan_per_stream] = np.sum(cross_bin_buffer,axis=1)
+                    binned_spikes[chan_per_stream :] = self.reduce_sbp(power_bin_buffer,axis=1)
                     
                     bin_dict[self.bin_ts_key] = time_now()
                     self.profiler.record("Binning", time.perf_counter() - t0)
