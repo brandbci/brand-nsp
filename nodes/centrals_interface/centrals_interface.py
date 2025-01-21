@@ -31,6 +31,9 @@ class CentralsInterface(BRANDNode):
         load_dotenv(self.env_file_path)
         pc1_user = os.environ.get('PC1_USER')
 
+        if not pc1_user:
+            raise KeyError(f'Could not find PC1_USER in {self.env_file_path}')
+
         # convert to correct path format if domain name is included for user
         if '\\' in pc1_user:
             pc1_user = pc1_user.split('\\')[1] + '.' + pc1_user.split('\\')[0]
