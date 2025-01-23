@@ -302,7 +302,7 @@ class NSP_all(BRANDNode):
             self.coefs = self.coefs.astype(self.output_dtype)
 
         else:
-            logging.info(
+            logging.warning(
                 f"Coefficients entry not found in Redis stream: {self.coefs_stream_name}. Setting coefficients to compute mean of all channels."
             )
 
