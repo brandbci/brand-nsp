@@ -679,7 +679,7 @@ class NSP_all(BRANDNode):
                                 f" last {timeout} ms")
 
 
-    def terminate(self, sig, frame):
+    def terminate(self, sig=None, frame=None):
         if self.enable_profiler:
             self.profiler.print_stats()
 

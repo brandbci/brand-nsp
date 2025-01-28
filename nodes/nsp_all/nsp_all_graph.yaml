@@ -98,7 +98,7 @@ derivatives:
       time_key: ts
       sync_timing_hz: 1000
       ch_mask_stream: z_mask_stream
-      find_reset_stream: cursorData
+      find_reset_stream: binned_spikes
       reset_keys: ["nsp_idx_1"]
       thresh_stream: thresholds
       streams:

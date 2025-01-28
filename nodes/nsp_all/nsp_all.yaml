@@ -16,7 +16,7 @@ RedisStreams:
       enable_nwb: False
       type_nwb: TimeSeries
       samples:
-        chan_per_stream: $n_channels
+        chan_per_stream: $chan_per_stream
         samp_per_stream: 1
         sample_type: float32
         nwb:
@@ -27,7 +27,7 @@ RedisStreams:
       enable_nwb: True
       type_nwb: SpikeTimes
       crossings:
-        chan_per_stream: $n_channels
+        chan_per_stream: $chan_per_stream
         samp_per_stream: 1
         sample_type: int16
         nwb:
@@ -37,7 +37,7 @@ RedisStreams:
       enable_nwb: False
       type_nwb: TimeSeries
       samples:
-        chan_per_stream: $n_channels
+        chan_per_stream: $chan_per_stream
         samp_per_stream: $samp_per_stream
         sample_type: $output_dtype
         nwb:
@@ -48,14 +48,14 @@ RedisStreams:
       enable_nwb: False
       type_nwb: TimeSeries
       samples:
-        chan_per_stream: $n_channels
+        chan_per_stream: $chan_per_stream
         samp_per_stream: 1
         sample_type: float64
         nwb:
           unit: 0.25uV
           description: RMS values for filtered broadband data
       thresholds:
-        chan_per_stream: $n_channels
+        chan_per_stream: $chan_per_stream
         samp_per_stream: 1
         sample_type: float64
         nwb:
