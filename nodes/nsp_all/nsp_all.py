@@ -60,20 +60,9 @@ class NSP_all(BRANDNode):
 
         self.init_streams() # Initialise all streams
         self.init_params()  # Initialise all parameters
-        
-
-        # Variables for maintaining the latest state (supergraph).
-        self.current_supergraph_dict = {}
-        self.current_supergraph_id = "0-0"
 
         self.profiler = TimingProfiler(self.enable_profiler ) # Initialise profiler
         self.profiler.record("INIT", time.perf_counter() - t_init)
-
-        # terminate on SIGINT
-        signal.signal(signal.SIGINT, self.terminate)
-
-        # Set flag to indicate that we are  using the correct electrode mapping for this data
-        self.r.set("using_correct_electrode_mapping", 1)
 
 
     def init_streams(self):
@@ -145,8 +134,6 @@ class NSP_all(BRANDNode):
         self.causal = not self.acausal_filter  # Derived from acausal_filter
         self.acausal_filter_lag = self.parameters.setdefault("acausal_filter_lag", 120)  # Default: 120 samples == 4ms lag
 
-        self.demean = self.parameters.setdefault("enable_CAR", False)
-
         self.filter_func, self.sos, self.zi, self.rev_win, self.rev_zi = self.build_filter()
 
 
@@ -184,7 +171,7 @@ class NSP_all(BRANDNode):
 
         if self.thresholds is None:
             logging.error(f"Thresholds not found in stream={thresholds_stream} or file={thresholds_file}. Exiting...")
-            signal.signal(signal.SIGINT, self.terminate)
+            self.terminate()
 
         self.logscale = self.parameters.setdefault("bandpower_logscale", False)
         self.reduce_sbp = getattr(np, self.parameters.setdefault("sbp_reduction_fn", "mean")) 
@@ -366,7 +353,7 @@ class NSP_all(BRANDNode):
             message += " IIR-FIR filter"
         else:
             message += " IIR-IIR filter"
-        message += " with CAR" if self.demean else ""
+        message += " with CAR" 
         logging.info(message)
 
         if not causal:
@@ -421,6 +408,7 @@ class NSP_all(BRANDNode):
         
         crossings = np.zeros_like(neural_data_reref)
         cross_now = np.zeros(chan_per_stream, dtype=np.int16)
+        coinc_now = np.zeros(chan_per_stream, dtype=np.int16)
         power_buffer = np.zeros(chan_per_stream, dtype=np.float32)
 
         # init buffers fro binning
@@ -567,6 +555,14 @@ class NSP_all(BRANDNode):
 
                 cross_now =get_threshold_crossing(crossings,filt_buffer,thresholds,cross_now) #slightly faster
                 cross_dict[self.cross_ts_key] = time_now()
+
+                # check for coincident crossings
+                tot_spikes = cross_now.sum()
+                if tot_spikes >= self.num_coincident:
+                    logging.info(f"{tot_spikes} coincident spikes detected, timestamp: {int(samp_time_current[0])}")
+                    coinc_now[:] = cross_now[:]
+                    cross_now[:] = 0
+
                 self.profiler.record("Threshold crossing", time.perf_counter() - t0)
 
 
@@ -619,17 +615,14 @@ class NSP_all(BRANDNode):
                 sync_dict_buffer.append(sync_dict_json)
                 
                 # check for coincident crossings
-                tot_spikes = cross_now.sum()
                 if tot_spikes >= self.num_coincident:
-                    logging.info(f"{tot_spikes} coincident spikes detected, timestamp: {int(samp_time_current[0])}")
 
                     coinc_dict[self.cross_sync_key] = sync_dict_json
                     coinc_dict[self.cross_ts_key] = time_now()
                     coinc_dict[b"timestamps"] = samp_time_current[0].tobytes()
-                    coinc_dict[b"crossings"] = cross_now.tobytes()
+                    coinc_dict[b"crossings"] = coinc_now.tobytes()
                     p.xadd(f"{self.cross_stream}_coinc", coinc_dict)
 
-                    cross_now[:] = 0
 
                 # write thresh_crossing
                 cross_dict[self.cross_sync_key] = sync_dict_json
@@ -641,7 +634,7 @@ class NSP_all(BRANDNode):
                 if self.output_filtered:
                     filt_dict[self.cross_sync_key] = sync_dict_json
                     filt_dict[b"timestamps"] = samp_time_current[0].tobytes()
-                    filt_dict[b"samples"] = filt_buffer.astype(np.int16).tobytes()
+                    filt_dict[b"samples"] = filt_buffer.astype(self.output_dtype).tobytes()
                     p.xadd(self.filt_stream, filt_dict)
 
                 # write adaptive_thresholds

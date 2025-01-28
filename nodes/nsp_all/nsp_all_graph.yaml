@@ -67,7 +67,6 @@ nodes:
       butter_lowercut: 250 # lower cutoff freq of bandpass filter
       butter_uppercut: ~ # upper cutoff freq of bandpass filter
       butter_order: 4 # butterworth filter order
-      enable_CAR: False
       output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
       acausal_filter_lag: 120
       acausal_filter: IIR

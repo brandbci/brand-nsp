@@ -7,7 +7,7 @@ RedisStreams:
       samples:
         chan_per_stream: $chan_per_stream
         samp_per_stream: $samp_per_stream
-        sample_type: int16
+        sample_type: $output_dtype
         nwb:
           unit: 0.25uV
           description: Re-referenced raw broadband data from Cerebus
@@ -32,16 +32,18 @@ RedisStreams:
         sample_type: int16
         nwb:
           crossings: crossings
+
     filtered:
       enable_nwb: False
       type_nwb: TimeSeries
       samples:
         chan_per_stream: $n_channels
-        samp_per_stream: $input_samp_per_stream
-        sample_type: int16
+        samp_per_stream: $samp_per_stream
+        sample_type: $output_dtype
         nwb:
           unit: 0.25uV
           description: Filtered broadband data
+
     rms_continuous:
       enable_nwb: False
       type_nwb: TimeSeries
@@ -59,3 +61,14 @@ RedisStreams:
         nwb:
           unit: 0.25uV
           description: Thresholds used for computing crossings
+
+    binned_spikes:
+      enable_nwb:           True
+      type_nwb:             TimeSeries
+      samples:
+        chan_per_stream:    $total_channels
+        samp_per_stream:    1
+        sample_type:        $output_dtype
+        nwb:
+          unit:             spikes
+          description:      spike counts
