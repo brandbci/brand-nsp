@@ -73,13 +73,11 @@ nodes:
       ch_mask_stream: z_mask_stream
       bandpower_logscale: False
       sbp_reduction_fn: mean # can be mean or sum
-      chan_per_stream: *nsp_channels
+      chan_per_stream: *nsp_channels #total channels
       samp_per_stream: 30
-      chan_total: *nsp_channels
-      start_channel: 0
+      neural_ch_range: [0, 256]
       samp_freq: 30000
       output_dtype: float32
-      total_channels: *total_features
       bin_size: 10
       bin_enable: True
       enable_profiler: True # Do we want to print the timing stats at the end of the node?

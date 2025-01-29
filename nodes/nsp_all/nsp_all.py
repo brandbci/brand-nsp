@@ -117,8 +117,14 @@ class NSP_all(BRANDNode):
         self.samp_per_stream = self.parameters.setdefault("samp_per_stream", 30)
         self.chan_per_stream = self.parameters.setdefault("chan_per_stream", 256)
 
-        self.start_chan = self.parameters.setdefault("start_channel", 0)
-        self.end_chan = self.start_chan + self.chan_per_stream
+        self.neural_ch_range = self.parameters.setdefault("neural_ch_range",[0, self.chan_per_stream])  
+        self.start_chan = self.neural_ch_range[0]
+        self.end_chan = self.neural_ch_range[1]
+
+        self.n_range = np.arange(self.start_chan, self.end_chan, dtype= int)                               
+        self.n_channels = self.parameters.setdefault("n_channel", self.n_range.shape[0])
+
+        self.thresholds_ch_range = self.parameters.setdefault("thresholds_ch_range",self.neural_ch_range)  
         self.th_chans = range(self.start_chan, self.end_chan)
         self.n_split = self.parameters.setdefault("n_split", 16)
                 
@@ -353,7 +359,7 @@ class NSP_all(BRANDNode):
             message += " IIR-FIR filter"
         else:
             message += " IIR-IIR filter"
-        message += " with CAR" 
+
         logging.info(message)
 
         if not causal:
@@ -386,6 +392,7 @@ class NSP_all(BRANDNode):
         pack_per_call = self.pack_per_call
         samp_per_stream = self.samp_per_stream
         chan_per_stream = self.chan_per_stream
+        n_channels = self.n_channels
 
         sos = self.sos
         thresholds = self.thresholds
@@ -398,24 +405,25 @@ class NSP_all(BRANDNode):
         buffer_fill = 0  # how many samples have been read into the buffer
 
         neural_data = np.zeros( (chan_per_stream, n_samp), dtype=self.output_dtype)
-        neural_data_reref = np.zeros_like(neural_data)
+        neural_data_reref = np.zeros_like(chan_per_stream)
 
-        filt_buffer = np.zeros_like(neural_data)
-        rev_buffer = np.zeros((chan_per_stream, self.acausal_filter_lag + n_samp), dtype=np.float32)
+        data_buffer = np.zeros((n_channels, n_samp), dtype=np.float32)
+        filt_buffer = np.zeros_like(data_buffer)
+        rev_buffer = np.zeros((n_channels, self.acausal_filter_lag + n_samp), dtype=np.float32)
         samp_times = np.zeros(n_samp, dtype=self.td_type)
         buffer_len = rev_buffer.shape[1]
         samp_times_buffer = np.zeros(buffer_len, dtype=self.td_type)
         
-        crossings = np.zeros_like(neural_data_reref)
-        cross_now = np.zeros(chan_per_stream, dtype=np.int16)
-        coinc_now = np.zeros(chan_per_stream, dtype=np.int16)
-        power_buffer = np.zeros(chan_per_stream, dtype=np.float32)
+        crossings = np.zeros_like(data_buffer)
+        cross_now = np.zeros(n_channels, dtype=np.int16)
+        coinc_now = np.zeros(n_channels, dtype=np.int16)
+        power_buffer = np.zeros(n_channels, dtype=np.float32)
 
         # init buffers fro binning
-        cross_bin_buffer = np.zeros((chan_per_stream, self.bin_size), dtype=np.int16)
-        power_bin_buffer = np.zeros((chan_per_stream, self.bin_size), dtype=np.float32)
+        cross_bin_buffer = np.zeros((n_channels, self.bin_size), dtype=np.int16)
+        power_bin_buffer = np.zeros((n_channels, self.bin_size), dtype=np.float32)
 
-        binned_spikes = np.zeros((chan_per_stream * 2), dtype=self.output_dtype)
+        binned_spikes = np.zeros((n_channels * 2), dtype=self.output_dtype)
 
         # initialize stream entries
 
@@ -490,6 +498,11 @@ class NSP_all(BRANDNode):
                 reref_dict[self.reref_ts_key] = time_now()
                 self.profiler.record("Re-referencing", time.perf_counter() - t0)
 
+                if len(self.n_range) == chan_per_stream:
+                    data_buffer = neural_data_reref
+                else:
+                    data_buffer = neural_data_reref[self.n_range,:]
+
 
                 ######################################## FILTERING ########################################
 
@@ -498,11 +511,11 @@ class NSP_all(BRANDNode):
 
                 if self.causal:
                     self.filter_func(
-                        neural_data_reref, filt_buffer, sos, zi
+                        data_buffer, filt_buffer, sos, zi
                     )
                 else:
                     self.filter_func(
-                        neural_data_reref,
+                        data_buffer,
                         filt_buffer,
                         rev_buffer,
                         sos=sos,
