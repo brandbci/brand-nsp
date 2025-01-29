@@ -72,6 +72,7 @@ class NSP_all(BRANDNode):
         self.coefs_stream_name = self.parameters.setdefault("coefs_stream_name","rereference_parameters")
         self.filt_stream = self.parameters.get('filt_stream', None)
         self.rms_stream = self.parameters.get('adaptive_rms_stream', None)
+        self.compute_reref = self.parameters.get('compute_reref', True)
 
         # main output stream idx in output_streams
         rrid = self.parameters.get('reref_stream_idx', 0)
@@ -132,7 +133,8 @@ class NSP_all(BRANDNode):
         self.neural_data_field = self.parameters.setdefault("neural_data_field", "samples")
 
         ###### FILTER PARAM INIT ######
-        self.initialize_coefficients()
+        if self.compute_reref:
+            self.initialize_coefficients()
 
         self.output_filtered = self.parameters.setdefault("output_filtered", False) 
         self.output_reref    = self.parameters.setdefault("output_reref", True) 
@@ -385,7 +387,7 @@ class NSP_all(BRANDNode):
             return np.uint64(time.monotonic_ns()).tobytes()
 
         ########################################### INIT ###########################################
-
+        compute_reref = self.compute_reref
         rev_win = self.rev_win
         rev_zi = self.rev_zi
 
@@ -404,8 +406,9 @@ class NSP_all(BRANDNode):
 
         buffer_fill = 0  # how many samples have been read into the buffer
 
-        neural_data = np.zeros( (chan_per_stream, n_samp), dtype=self.output_dtype)
-        neural_data_reref = np.zeros_like(chan_per_stream)
+        if compute_reref:
+            neural_data = np.zeros( (chan_per_stream, n_samp), dtype=self.output_dtype)
+            neural_data_reref = np.zeros_like(chan_per_stream)
 
         data_buffer = np.zeros((n_channels, n_samp), dtype=np.float32)
         filt_buffer = np.zeros_like(data_buffer)
@@ -453,55 +456,76 @@ class NSP_all(BRANDNode):
             t0 = time.perf_counter()
             t_start =time.perf_counter()
             xread_receive = self.r.xread(
-                {self.input_stream: input_id}, block=timeout, count=1
+                {self.input_stream: input_id}, block=timeout, count=pack_per_call
             )
 
             if len(xread_receive) >= pack_per_call:
                 t_start_after_redis =time.perf_counter()
-                input_id = xread_receive[0][1][0][0]
-                entry_data = xread_receive[0][1][0][1]
 
-                # read timestamps
-                ts = np.concatenate([last_ts, np.frombuffer(entry_data[self.nsp_ts_field], dtype=self.nsp_ts_dtype).astype(int)])
+                if self.compute_reref:
+                    input_id = xread_receive[0][1][0][0]
+                    entry_data = xread_receive[0][1][0][1]
 
-                # check if timestamps are in order
-                neg_time_diff = np.diff(ts) < 0
-                if np.any(neg_time_diff):
-                    neg_ts = ts[1:][neg_time_diff]
-                    logging.warning(f"Timestamps {neg_ts} are not in order!!!")
-                last_ts = ts[-1:]
+                    # read timestamps
+                    ts = np.concatenate([last_ts, np.frombuffer(entry_data[self.nsp_ts_field], dtype=self.nsp_ts_dtype).astype(int)])
 
-                neural_data[:] = (
-                    np.frombuffer(entry_data[self.neural_data_field.encode()], dtype=self.input_dtype)
-                    .reshape((chan_per_stream, n_samp))
-                    .astype(self.output_dtype)
-                )
-                if self.use_tracking_id:
-                    samp_times[:] = np.repeat(
-                        np.frombuffer(entry_data[b"tracking_id"], self.td_type), samp_per_stream)
+                    # check if timestamps are in order
+                    neg_time_diff = np.diff(ts) < 0
+                    if np.any(neg_time_diff):
+                        neg_ts = ts[1:][neg_time_diff]
+                        logging.warning(f"Timestamps {neg_ts} are not in order!!!")
+                    last_ts = ts[-1:]
+
+                    neural_data[:] = (
+                        np.frombuffer(entry_data[self.neural_data_field.encode()], dtype=self.input_dtype)
+                        .reshape((chan_per_stream, n_samp))
+                        .astype(self.output_dtype)
+                    )
+                    if self.use_tracking_id:
+                        samp_times[:] = np.repeat(
+                            np.frombuffer(entry_data[b"tracking_id"], self.td_type), samp_per_stream)
+                    else:
+                        samp_times[:] = np.frombuffer(entry_data[b"timestamps"], self.td_type)
+
+                    self.profiler.record("Redis read", time.perf_counter() - t0)
+
+
+                    ###################################### RE-REFERENCING ######################################
+
+
+                    t0 = time.perf_counter()
+
+                    n = 0
+                    while n < chan_per_stream:
+                        neural_data_reref[n:n+self.n_split,:] = np.dot(self.coefs[n:n+self.n_split,:], neural_data[:])
+                        n += self.n_split
+
+                    reref_dict[self.reref_ts_key] = time_now()
+                    self.profiler.record("Re-referencing", time.perf_counter() - t0)
+
+                    if len(self.n_range) == chan_per_stream:
+                        data_buffer = neural_data_reref
+                    else:
+                        data_buffer = neural_data_reref[self.n_range,:]
+
                 else:
-                    samp_times[:] = np.frombuffer(entry_data[b"timestamps"], self.td_type)
 
-                self.profiler.record("Redis read", time.perf_counter() - t0)
+                    indStart = 0
+                    # run each entry individually
+                    for entry_id, entry_data in xread_receive[0][1]:
+                        indEnd = indStart + samp_per_stream
+                        data_buffer[:, indStart:indEnd] = np.reshape(
+                            np.frombuffer(entry_data[b'samples'],
+                                        dtype=self.dtype),
+                            (n_channels, samp_per_stream))[self.n_range,:]
+                        if self.use_tracking_id:
+                            samp_times[indStart:indEnd] = np.repeat(np.frombuffer(entry_data[b'tracking_id'], self.td_type), samp_per_stream)
+                        else:
+                            samp_times[indStart:indEnd] = np.frombuffer(entry_data[b'timestamps'], self.td_type)
+                        indStart = indEnd
 
-
-                ###################################### RE-REFERENCING ######################################
-
-
-                t0 = time.perf_counter()
-
-                n = 0
-                while n < chan_per_stream:
-                    neural_data_reref[n:n+self.n_split,:] = np.dot(self.coefs[n:n+self.n_split,:], neural_data[:])
-                    n += self.n_split
-
-                reref_dict[self.reref_ts_key] = time_now()
-                self.profiler.record("Re-referencing", time.perf_counter() - t0)
-
-                if len(self.n_range) == chan_per_stream:
-                    data_buffer = neural_data_reref
-                else:
-                    data_buffer = neural_data_reref[self.n_range,:]
+                    # update key to be the entry number of last item in list
+                    input_id = entry_id
 
 
                 ######################################## FILTERING ########################################

@@ -45,7 +45,8 @@ nodes:
       binned_spikes: binned_spikes
     parameters:
       log: INFO
-      input_stream: nsp_neural
+      input_stream: nsp_neural 
+      compute_reref: True # if false input_stream=reref_neural stream
       output_reref: True
       reref_maxlen: ~
       coefs_stream_name: rereference_parameters
