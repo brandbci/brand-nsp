@@ -38,7 +38,7 @@ nodes:
     machine: brand
     run_priority: 99
     cpu_affinity: 8-9
-    redis_output:
+    redis_outputs:
       reref_neural: rerefContinuousNeural
       thresh_cross: thresh_cross
       sbp: band_power
@@ -50,7 +50,7 @@ nodes:
       output_reref: True
       reref_maxlen: ~
       coefs_stream_name: rereference_parameters
-      reref_stream_idx: 0
+      reref_stream_idx: 0 # -1 if compute_reref=False 
       thresh_cross_stream_idx: 1
       band_power_stream_idx: 2
       binned_spikes_stream_idx: 3
@@ -76,8 +76,8 @@ nodes:
       sbp_reduction_fn: mean # can be mean or sum
       chan_per_stream: *nsp_channels #total channels
       samp_per_stream: 30
-      neural_ch_range: [0, 256]
-      n_channels: *nsp_channels
+      neural_ch_range: [0, 128]
+      n_channels: 128
       samp_freq: 30000
       output_dtype: float32
       bin_size: 10

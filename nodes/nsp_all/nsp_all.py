@@ -155,17 +155,17 @@ class NSP_all(BRANDNode):
         
         if self.adaptive_thresholds:
             self.rms_window_len = self.parameters["adaptive_rms_window_len"]
-            self.mean_squared_buffer = np.zeros((self.chan_per_stream, self.rms_window_len), dtype=np.float64)
+            self.mean_squared_buffer = np.zeros((self.n_channels, self.rms_window_len), dtype=np.float64)
             self.mean_squared_buffer_index = 0
             self.mean_squared_buffer_full = False
-            self.mean_squared_last = np.zeros((self.chan_per_stream), dtype=np.float64)
-            self.mean_squared_new = np.zeros((self.chan_per_stream), dtype=np.float64)
-            self.root_mean_squared = np.zeros((self.chan_per_stream), dtype=np.float64)
+            self.mean_squared_last = np.zeros((self.n_channels), dtype=np.float64)
+            self.mean_squared_new = np.zeros((self.n_channels), dtype=np.float64)
+            self.root_mean_squared = np.zeros((self.n_channels), dtype=np.float64)
             logging.info(
                 f"Adaptive spike thresholds enabled, using RMS computed over {self.samp_per_stream*self.rms_window_len} 30kHz samples"
             )
 
-        self.num_coincident = self.parameters.get("num_coincident_spikes", self.chan_per_stream + 1)
+        self.num_coincident = self.parameters.get("num_coincident_spikes", self.n_channels + 1)
 
         thresholds_stream = self.parameters.setdefault("thresholds_stream", "thresholds")
         thresholds_file = self.parameters.setdefault("thresholds_file", None)
@@ -273,8 +273,8 @@ class NSP_all(BRANDNode):
                 entry_dict[b"channel_scaling"], dtype=np.float64
             ).reshape((self.chan_per_stream, self.chan_per_stream))
             self.coefs = self.coefs_all[
-                self.start_chan : self.start_chan + self.chan_per_stream,
-                self.start_chan : self.start_chan + self.chan_per_stream,
+                self.start_chan : self.start_chan + self.n_channels,
+                self.start_chan : self.start_chan + self.n_channels,
             ]
 
             if b"channel_unshuffling" in entry_dict:
@@ -289,11 +289,11 @@ class NSP_all(BRANDNode):
                 )
 
             unshuffle = unshuffle_all[
-                self.start_chan : self.start_chan + self.chan_per_stream,
-                self.start_chan : self.start_chan + self.chan_per_stream,
+                self.start_chan : self.start_chan + self.n_channels,
+                self.start_chan : self.start_chan + self.n_channels,
             ]
 
-            self.coefs = (np.eye(self.chan_per_stream) - self.coefs) @ unshuffle
+            self.coefs = (np.eye(self.n_channels) - self.coefs) @ unshuffle
             self.coefs = self.coefs.astype(self.output_dtype)
 
         else:
@@ -302,9 +302,9 @@ class NSP_all(BRANDNode):
             )
 
             self.coefs = (
-                np.eye(self.chan_per_stream)
-                - np.ones((self.chan_per_stream, self.chan_per_stream))
-                / self.chan_per_stream
+                np.eye(self.n_channels)
+                - np.ones((self.n_channels, self.n_channels))
+                / self.n_channels
             )
             self.coefs.astype(self.parameters["output_dtype"])
 
@@ -340,9 +340,9 @@ class NSP_all(BRANDNode):
         # initialize the state of the filter
         zi_flat = scipy.signal.sosfilt_zi(sos)
         # so that we have the right number of dimensions
-        zi = np.zeros((zi_flat.shape[0], self.chan_per_stream, zi_flat.shape[1]))
+        zi = np.zeros((zi_flat.shape[0], self.n_channels, zi_flat.shape[1]))
         # filter initialization
-        for ii in range(self.chan_per_stream):
+        for ii in range(self.n_channels):
             zi[:, ii, :] = zi_flat
 
         # select the filtering function
@@ -372,8 +372,8 @@ class NSP_all(BRANDNode):
                 rev_win = scipy.signal.sosfilt(sos, imp)
                 # filter initialization
                 rev_zi_flat = scipy.signal.lfilter_zi(rev_win, 1.0)
-                rev_zi = np.zeros((self.chan_per_stream, rev_zi_flat.shape[0]))
-                for ii in range(self.chan_per_stream):
+                rev_zi = np.zeros((self.n_channels, rev_zi_flat.shape[0]))
+                for ii in range(self.n_channels):
                     rev_zi[ii, :] = rev_zi_flat
             else:
                 rev_win = None
@@ -408,7 +408,7 @@ class NSP_all(BRANDNode):
 
         if compute_reref:
             neural_data = np.zeros( (chan_per_stream, n_samp), dtype=self.output_dtype)
-            neural_data_reref = np.zeros_like(chan_per_stream)
+            neural_data_reref = np.zeros_like(neural_data)
 
         data_buffer = np.zeros((n_channels, n_samp), dtype=np.float32)
         filt_buffer = np.zeros_like(data_buffer)
@@ -513,7 +513,7 @@ class NSP_all(BRANDNode):
                         indEnd = indStart + samp_per_stream
                         data_buffer[:, indStart:indEnd] = np.reshape(
                             np.frombuffer(entry_data[b'samples'],
-                                        dtype=self.dtype),
+                                        dtype=self.input_dtype),
                             (chan_per_stream, samp_per_stream))[self.n_range,:]
                         if self.use_tracking_id:
                             samp_times[indStart:indEnd] = np.repeat(np.frombuffer(entry_data[b'tracking_id'], self.td_type), samp_per_stream)
@@ -622,8 +622,8 @@ class NSP_all(BRANDNode):
                 if self.bin_enable and self.bin_size == buffer_num:
                     t0 = time.perf_counter()
 
-                    binned_spikes[: chan_per_stream] = np.sum(cross_bin_buffer,axis=1)
-                    binned_spikes[chan_per_stream :] = self.reduce_sbp(power_bin_buffer,axis=1)
+                    binned_spikes[: n_channels] = np.sum(cross_bin_buffer,axis=1)
+                    binned_spikes[n_channels :] = self.reduce_sbp(power_bin_buffer,axis=1)
                     
                     bin_dict[self.bin_ts_key] = time_now()
                     self.profiler.record("Binning", time.perf_counter() - t0)

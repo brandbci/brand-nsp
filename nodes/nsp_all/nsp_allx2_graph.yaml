@@ -38,22 +38,23 @@ nodes:
     machine: brand
     run_priority: 99
     cpu_affinity: 8-9
-    redis_output:
+    redis_outputs:
       reref_neural: rerefContinuousNeural
       thresh_cross: thresh_cross
       sbp: band_power
       binned_spikes: binned_spikes
     parameters:
       log: INFO
-      input_stream: reref_neural 
+      input_stream: reref_neural
+      input_dtype:  float32
       compute_reref: False # if false input_stream=reref_neural stream
       output_reref: True
       reref_maxlen: ~
       coefs_stream_name: rereference_parameters
-      reref_stream_idx: 0
-      thresh_cross_stream_idx: 1
-      band_power_stream_idx: 2
-      binned_spikes_stream_idx: 3
+      reref_stream_idx: -1 # -1 if compute_reref=False 
+      thresh_cross_stream_idx: 0
+      band_power_stream_idx: 1
+      binned_spikes_stream_idx: 2
       output_streams: [thresh_cross, sbp, binned_spikes] #names
       sync_key: [  sync, sync ,sync]
       ts_key: [ ts, ts, ts]
@@ -90,22 +91,23 @@ nodes:
     machine: brand
     run_priority: 99
     cpu_affinity: 10-11
-    redis_output:
+    redis_outputs:
       # reref_neural: rerefContinuousNeural
-      thresh_cross: thresh_cross2
-      sbp: band_power2
-      binned_spikes: binned_spikes2
+      thresh_cross2: thresh_cross
+      sbp2: band_power
+      binned_spikes2: binned_spikes
     parameters:
       log: INFO
       input_stream: reref_neural 
-      compute_reref: True # if false input_stream=reref_neural stream
+      input_dtype:  float32
+      compute_reref: False # if false input_stream=reref_neural stream
       output_reref: True
       reref_maxlen: ~
       coefs_stream_name: rereference_parameters
-      reref_stream_idx: 0
-      thresh_cross_stream_idx: 1
-      band_power_stream_idx: 2
-      binned_spikes_stream_idx: 3
+      reref_stream_idx: -1 # -1 if compute_reref=False 
+      thresh_cross_stream_idx: 0
+      band_power_stream_idx: 1
+      binned_spikes_stream_idx: 2
       output_streams: [ thresh_cross2, sbp2, binned_spikes2] #names
       sync_key: [ sync, sync ,sync]
       ts_key: [ ts, ts, ts]
@@ -136,7 +138,24 @@ nodes:
       bin_enable: True
       enable_profiler: True # Do we want to print the timing stats at the end of the node?
 
-
+  - name: re_reference
+    nickname: re_ref
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 23
+    redis_outputs:
+      reref_neural: rerefContinuousNeural
+    parameters:
+      log: INFO
+      input_stream_name: nsp_neural
+      output_stream_name: reref_neural
+      coefs_stream_name: rereference_parameters
+      chan_per_stream: *nsp_channels
+      samp_per_stream: 30
+      chan_total: *nsp_channels
+      start_channel: 0
+      output_dtype: float32
 
 derivatives:
   - nickname: exportNWB
