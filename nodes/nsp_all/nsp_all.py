@@ -123,7 +123,7 @@ class NSP_all(BRANDNode):
         self.end_chan = self.neural_ch_range[1]
 
         self.n_range = np.arange(self.start_chan, self.end_chan, dtype= int)                               
-        self.n_channels = self.parameters.setdefault("n_channel", self.n_range.shape[0])
+        self.n_channels = self.parameters.setdefault("n_channels", self.n_range.shape[0])
 
         self.thresholds_ch_range = self.parameters.setdefault("thresholds_ch_range",self.neural_ch_range)  
         self.th_chans = range(self.start_chan, self.end_chan)
@@ -503,10 +503,7 @@ class NSP_all(BRANDNode):
                     reref_dict[self.reref_ts_key] = time_now()
                     self.profiler.record("Re-referencing", time.perf_counter() - t0)
 
-                    if len(self.n_range) == chan_per_stream:
-                        data_buffer = neural_data_reref
-                    else:
-                        data_buffer = neural_data_reref[self.n_range,:]
+                    data_buffer[:] = neural_data_reref[self.n_range,:]
 
                 else:
 
@@ -517,7 +514,7 @@ class NSP_all(BRANDNode):
                         data_buffer[:, indStart:indEnd] = np.reshape(
                             np.frombuffer(entry_data[b'samples'],
                                         dtype=self.dtype),
-                            (n_channels, samp_per_stream))[self.n_range,:]
+                            (chan_per_stream, samp_per_stream))[self.n_range,:]
                         if self.use_tracking_id:
                             samp_times[indStart:indEnd] = np.repeat(np.frombuffer(entry_data[b'tracking_id'], self.td_type), samp_per_stream)
                         else:
@@ -640,7 +637,7 @@ class NSP_all(BRANDNode):
                 p = self.r.pipeline() 
 
                 # write reref_neural if enabled
-                if self.output_reref:
+                if self.output_reref and self.compute_reref:
                     reref_dict = {k: v for k, v in entry_data.items()}  
                     reref_dict[self.reref_ts_key] = time_now()
                     reref_dict[self.neural_data_field] = neural_data_reref.astype(self.output_dtype).tobytes()

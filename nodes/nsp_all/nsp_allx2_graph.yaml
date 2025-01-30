@@ -45,8 +45,8 @@ nodes:
       binned_spikes: binned_spikes
     parameters:
       log: INFO
-      input_stream: nsp_neural 
-      compute_reref: True # if false input_stream=reref_neural stream
+      input_stream: reref_neural 
+      compute_reref: False # if false input_stream=reref_neural stream
       output_reref: True
       reref_maxlen: ~
       coefs_stream_name: rereference_parameters
@@ -54,9 +54,9 @@ nodes:
       thresh_cross_stream_idx: 1
       band_power_stream_idx: 2
       binned_spikes_stream_idx: 3
-      output_streams: [reref_neural, thresh_cross, sbp, binned_spikes] #names
-      sync_key: [ tracking_id, sync, sync ,sync]
-      ts_key: [BRANDS_time, ts, ts, ts]
+      output_streams: [thresh_cross, sbp, binned_spikes] #names
+      sync_key: [  sync, sync ,sync]
+      ts_key: [ ts, ts, ts]
       use_tracking_id: True
       td_type:  uint64
       sync_dict_key: nsp_idx_1
@@ -76,13 +76,66 @@ nodes:
       sbp_reduction_fn: mean # can be mean or sum
       chan_per_stream: *nsp_channels #total channels
       samp_per_stream: 30
-      neural_ch_range: [0, 256]
-      n_channels: *nsp_channels
+      neural_ch_range: [0, 128]
+      n_channels: 128
       samp_freq: 30000
       output_dtype: float32
       bin_size: 10
       bin_enable: True
       enable_profiler: True # Do we want to print the timing stats at the end of the node?
+
+  - name: nsp_all
+    nickname: nsp_all2
+    module: ../brand-modules/brand-nsp
+    machine: brand
+    run_priority: 99
+    cpu_affinity: 10-11
+    redis_output:
+      # reref_neural: rerefContinuousNeural
+      thresh_cross: thresh_cross2
+      sbp: band_power2
+      binned_spikes: binned_spikes2
+    parameters:
+      log: INFO
+      input_stream: reref_neural 
+      compute_reref: True # if false input_stream=reref_neural stream
+      output_reref: True
+      reref_maxlen: ~
+      coefs_stream_name: rereference_parameters
+      reref_stream_idx: 0
+      thresh_cross_stream_idx: 1
+      band_power_stream_idx: 2
+      binned_spikes_stream_idx: 3
+      output_streams: [ thresh_cross2, sbp2, binned_spikes2] #names
+      sync_key: [ sync, sync ,sync]
+      ts_key: [ ts, ts, ts]
+      use_tracking_id: True
+      td_type:  uint64
+      sync_dict_key: nsp_idx_1
+      filt_stream: ~
+      adaptive_rms_stream: ~ #adaptive rms stream
+      pack_per_call: 1 # number of redis packets to pull per loop
+      thresh_mult: -4.5 # threshold Values
+      thresh_calc_len: 2000 # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      ch_mask_stream: z_mask_stream
+      bandpower_logscale: False
+      sbp_reduction_fn: mean # can be mean or sum
+      chan_per_stream: *nsp_channels #total channels
+      samp_per_stream: 30
+      neural_ch_range: [128, 256]
+      n_channels: 128
+      samp_freq: 30000
+      output_dtype: float32
+      bin_size: 10
+      bin_enable: True
+      enable_profiler: True # Do we want to print the timing stats at the end of the node?
+
 
 
 derivatives:
@@ -117,7 +170,18 @@ derivatives:
           enable: True
           sync: ["nsp_idx_1"]
           rate: 100
-
+        thresh_cross2:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 1000
+        sbp2:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 1000
+        binned_spikes2:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 100
 
 
 
