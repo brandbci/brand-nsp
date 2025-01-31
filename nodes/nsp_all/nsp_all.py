@@ -37,7 +37,7 @@ class TimingProfiler:
     def print_stats(self):
         if self.enable:
             stats = self.get_stats()
-            logging.info("\nTiming Statistics (in milliseconds):")
+            logging.info("Timing Statistics (in milliseconds):")
             logging.info("-" * 85)  # Widened to accommodate median
             logging.info(f"{'Operation':<30} {'Mean':>10} {'Median':>10} {'Min':>10} {'Max':>10} {'Count':>10}")
             logging.info("-" * 85)
@@ -269,31 +269,22 @@ class NSP_all(BRANDNode):
 
             entry_id, entry_dict = entries[0]
 
-            self.coefs_all = np.frombuffer(
+            self.coefs = np.frombuffer(
                 entry_dict[b"channel_scaling"], dtype=np.float64
             ).reshape((self.chan_per_stream, self.chan_per_stream))
-            self.coefs = self.coefs_all[
-                self.start_chan : self.start_chan + self.n_channels,
-                self.start_chan : self.start_chan + self.n_channels,
-            ]
 
             if b"channel_unshuffling" in entry_dict:
-                unshuffle_all = np.frombuffer(
+                unshuffle = np.frombuffer(
                     entry_dict[b"channel_unshuffling"], dtype=np.float64
                 ).reshape((self.chan_per_stream, self.chan_per_stream))
                 logging.info(f"Unshuffling matrix loaded from stream.")
             else:
-                unshuffle_all = np.eye(self.chan_per_stream, dtype=np.float64)
+                unshuffle = np.eye(self.chan_per_stream, dtype=np.float64)
                 logging.info(
                     f"No unshuffling matrix found. Assuming channels are in order."
                 )
 
-            unshuffle = unshuffle_all[
-                self.start_chan : self.start_chan + self.n_channels,
-                self.start_chan : self.start_chan + self.n_channels,
-            ]
-
-            self.coefs = (np.eye(self.n_channels) - self.coefs) @ unshuffle
+            self.coefs = (np.eye(self.chan_per_stream) - self.coefs) @ unshuffle
             self.coefs = self.coefs.astype(self.output_dtype)
 
         else:
@@ -302,11 +293,11 @@ class NSP_all(BRANDNode):
             )
 
             self.coefs = (
-                np.eye(self.n_channels)
-                - np.ones((self.n_channels, self.n_channels))
-                / self.n_channels
+                np.eye(self.chan_per_stream)
+                - np.ones((self.chan_per_stream, self.chan_per_stream))
+                / self.chan_per_stream
             )
-            self.coefs.astype(self.parameters["output_dtype"])
+            self.coefs.astype(self.output_dtype)
 
     def build_filter(self):
 
