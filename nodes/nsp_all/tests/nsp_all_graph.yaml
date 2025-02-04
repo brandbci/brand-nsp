@@ -76,8 +76,8 @@ nodes:
       sbp_reduction_fn: mean # can be mean or sum
       chan_per_stream: *nsp_channels #total channels
       samp_per_stream: 30
-      neural_ch_range: [0, 128]
-      n_channels: 128
+      neural_ch_range: [0, 256]
+      n_channels: 256
       samp_freq: 30000
       output_dtype: float32
       bin_size: 10

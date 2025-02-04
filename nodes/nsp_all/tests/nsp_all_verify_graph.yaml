@@ -1,0 +1,251 @@
+parameters:
+  nsp_channels: &nsp_channels 256
+  total_features: &total_features 512
+  sync_key: &sync_key sync
+  time_key: &time_key ts
+
+nodes:
+  - name: centrals_interface
+    nickname: centrals_interface
+    module: ../brand-modules/brand-nsp
+    machine: gpc
+    parameters:
+      log: INFO
+      env_file_path: /samba/tmp/BRAND/environment.sh
+
+
+  - name: cerebusAdapterGem
+    nickname: nsp_in
+    module: ../brand-modules/brand-nsp
+    machine: brand
+    run_priority: 99
+    cpu_affinity: 18
+    redis_outputs:
+      nsp_neural: ContinuousNeural
+    parameters:
+      broadcast_ip: 192.168.137.255
+      broadcast_port: 51002
+      broadcast_device: enp3s0f0
+      num_streams: 1
+      stream_names: [nsp_neural]
+      samp_freq: [30000]
+      packet_type: [5]
+      chan_per_stream: [*nsp_channels]
+      samp_per_stream: [30]
+
+
+  - name: nsp_all
+    nickname: nsp_all
+    module: ../brand-modules/brand-nsp
+    machine: brand
+    run_priority: 99
+    cpu_affinity: 8-9
+    redis_outputs:
+      reref_neural_all: rerefContinuousNeural
+      thresh_cross_all: thresh_cross
+      sbp_all: band_power
+      binned_spikes_all: binned_spikes
+    parameters:
+      log: INFO
+      input_stream: nsp_neural 
+      compute_reref: True # if false input_stream=reref_neural stream
+      output_reref: True
+      reref_maxlen: ~
+      coefs_stream_name: rereference_parameters
+      reref_stream_idx: 0 # -1 if compute_reref=False 
+      thresh_cross_stream_idx: 1
+      band_power_stream_idx: 2
+      binned_spikes_stream_idx: 3
+      output_streams: [reref_neural_all, thresh_cross_all, sbp_all, binned_spikes_all] #names
+      sync_key: [ tracking_id, sync, sync ,sync]
+      ts_key: [BRANDS_time, ts, ts, ts]
+      use_tracking_id: True
+      td_type:  uint64
+      sync_dict_key: nsp_idx_1
+      filt_stream: ~
+      adaptive_rms_stream: ~ #adaptive rms stream
+      pack_per_call: 1 # number of redis packets to pull per loop
+      thresh_mult: -4.5 # threshold Values
+      thresh_calc_len: 2000 # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      ch_mask_stream: z_mask_stream
+      bandpower_logscale: False
+      sbp_reduction_fn: mean # can be mean or sum
+      chan_per_stream: *nsp_channels #total channels
+      samp_per_stream: 30
+      neural_ch_range: [0, 256]
+      n_channels: 256
+      samp_freq: 30000
+      output_dtype: float32
+      bin_size: 10
+      bin_enable: True
+      enable_profiler: True # Do we want to print the timing stats at the end of the node?
+
+  - name: bin_multiple
+    nickname: bin_multiple
+    machine: brand
+    module: ../brand-modules/brand-emory
+    run_priority: 99
+    cpu_affinity: 16
+    redis_outputs:
+      binned_spikes_old: binned_spikes
+    parameters:
+      chan_per_stream: [256, 256]
+      total_channels: *total_features
+      bin_size: 10
+      log: INFO
+      input_streams: [thresh_cross_old, sbp_old]
+      input_field: [crossings, samples]
+      input_dtype: [int16, float32]
+      output_stream: binned_spikes_old
+      output_dtype: float32
+      sync_key: *sync_key
+      time_key: *time_key
+
+
+  - name: bpExtraction
+    nickname: sbp_old
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 12-13
+    redis_outputs:
+      sbp_old: band_power
+    parameters:
+      log: INFO
+      pack_per_call: 1 # number of redis packets to pull per loop
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      enable_CAR: False
+      CAR_group_sizes: 64
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      input_name: reref_neural_old
+      input_chan_per_stream: *nsp_channels # number of channels
+      input_samp_per_stream: 30 # number of samples per channel per redis entry
+      input_samp_freq: 30000
+      input_data_type: float32
+      use_tracking_id: True
+      timestamp_data_type: uint64
+      sync_key: *sync_key
+      time_key: *time_key
+      sync_source_id: nsp_idx_1
+      neural_ch_range: [0, 256]
+      n_channels: 256
+      ch_mask_stream: z_mask_stream
+
+
+  - name: thresholdExtraction
+    nickname: thresh_cross_old
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 6-7
+    redis_outputs:
+      thresh_cross_old: thresh_cross
+    parameters:
+      log: INFO
+      pack_per_call: 1 # number of redis packets to pull per loop
+      thresh_mult: -4.5 # threshold Values
+      thresh_calc_len: 2000 # how much data (in buffers of data -- usually 1 ms worth) do we want to use to calculate threshold values?
+      butter_lowercut: 250 # lower cutoff freq of bandpass filter
+      butter_uppercut: ~ # upper cutoff freq of bandpass filter
+      butter_order: 4 # butterworth filter order
+      enable_CAR: False
+      output_filtered: False # Do we want to export the filtered data? Good for debugging, but makes the rdb big!
+      acausal_filter_lag: 120
+      acausal_filter: IIR
+      input_name: reref_neural_old
+      input_chan_per_stream: *nsp_channels # number of channels
+      input_samp_per_stream: 30 # number of samples per channel per redis entry
+      input_samp_freq: 30000
+      input_data_type: float32
+      use_tracking_id: True
+      timestamp_data_type: uint64
+      sync_key: *sync_key
+      time_key: *time_key
+      sync_source_id: nsp_idx_1
+      thresholds_stream: thresholds
+      neural_ch_range: [0, 256]
+      thresholds_ch_range: [0, 256]
+      n_channels: 256
+      ch_mask_stream: z_mask_stream
+
+  - name: re_reference
+    nickname: re_ref_old
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 23
+    redis_outputs:
+      reref_neural_old: rerefContinuousNeural
+    parameters:
+      log: INFO
+      input_stream_name: nsp_neural
+      output_stream_name: reref_neural_old
+      coefs_stream_name: rereference_parameters
+      chan_per_stream: *nsp_channels
+      samp_per_stream: 30
+      chan_total: *nsp_channels
+      start_channel: 0
+      output_dtype: float32
+      maxlen: ~
+
+
+
+derivatives:
+  # - nickname: exportNWB
+  #   name: exportNWB.py
+  #   module: ../brand-modules/brand-emory
+  #   autorun_step: 0
+  #   parameters:
+  #     devices_file: ../config/devices.yaml
+  #     participant_file: ../config/t16/t16.yaml
+  #     description: recording autocue data from center out task and display
+  #     sync_key: sync
+  #     time_key: ts
+  #     sync_timing_hz: 1000
+  #     ch_mask_stream: z_mask_stream
+  #     find_reset_stream: binned_spikes
+  #     reset_keys: ["nsp_idx_1"]
+  #     thresh_stream: thresholds
+  #     streams:
+  #       reref_neural_all:
+  #         enable: False
+  #         sync: ["nsp_idx_1"]
+  #       thresh_cross_all:
+  #         enable: True
+  #         sync: ["nsp_idx_1"]
+  #         rate: 1000
+  #       sbp_all:
+  #         enable: True
+  #         sync: ["nsp_idx_1"]
+  #         rate: 1000
+  #       binned_spikes_all:
+  #         enable: True
+  #         sync: ["nsp_idx_1"]
+  #         rate: 100
+
+  - nickname: saveRDB
+    name: saveRDB.py
+    module: ../brand-modules/brand-emory
+    autorun_step: 10
+    parameters:
+      flush_streams_before_save: [reref_neural]
+      flush_rdb_after_save: True
+      flush_rdb_except_streams:
+        - thresholds
+        - normalization_parameters
+        - normalize_exit_parameters
+        - z_mask_stream
+        - rereference_parameters
+        - claus_path
+        - claus_click_path
+        - array_mask
+        - button_info_stream
