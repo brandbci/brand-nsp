@@ -4,9 +4,6 @@ ifneq ($(CONDA_DEFAULT_ENV),rt)
 $(error real-time conda env (rt) not active)
 endif
 
-ROOT ?=../..
-include $(ROOT)/setenv.mk
-
 PYTHON_VERSION=3.8 # This works for rt env
 PYTHON_LIB=python$(PYTHON_VERSION)
 
