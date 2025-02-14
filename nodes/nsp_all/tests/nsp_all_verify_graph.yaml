@@ -197,40 +197,61 @@ nodes:
       output_dtype: float32
       maxlen: ~
 
+  - name: block_timer
+    nickname: block_timer
+    module: ../brand-modules/brand-emory
+    machine: brand
+    run_priority: 99
+    cpu_affinity: 22
+    parameters:
+      log: INFO
+      hours: 0
+      minutes: 0
+      seconds: 120
+      update_rate: 1
+      do_derivatives: 0
+
 
 
 derivatives:
-  # - nickname: exportNWB
-  #   name: exportNWB.py
-  #   module: ../brand-modules/brand-emory
-  #   autorun_step: 0
-  #   parameters:
-  #     devices_file: ../config/devices.yaml
-  #     participant_file: ../config/t16/t16.yaml
-  #     description: recording autocue data from center out task and display
-  #     sync_key: sync
-  #     time_key: ts
-  #     sync_timing_hz: 1000
-  #     ch_mask_stream: z_mask_stream
-  #     find_reset_stream: binned_spikes
-  #     reset_keys: ["nsp_idx_1"]
-  #     thresh_stream: thresholds
-  #     streams:
-  #       reref_neural_all:
-  #         enable: False
-  #         sync: ["nsp_idx_1"]
-  #       thresh_cross_all:
-  #         enable: True
-  #         sync: ["nsp_idx_1"]
-  #         rate: 1000
-  #       sbp_all:
-  #         enable: True
-  #         sync: ["nsp_idx_1"]
-  #         rate: 1000
-  #       binned_spikes_all:
-  #         enable: True
-  #         sync: ["nsp_idx_1"]
-  #         rate: 100
+  - nickname: exportNWB
+    name: exportNWB.py
+    module: ../brand-modules/brand-emory
+    autorun_step: 0
+    parameters:
+      devices_file: ../config/devices.yaml
+      participant_file: ../config/t16/t16.yaml
+      description: recording autocue data from center out task and display
+      sync_key: sync
+      time_key: ts
+      sync_timing_hz: 1000
+      ch_mask_stream: z_mask_stream
+      thresh_stream: thresholds
+      streams:
+        thresh_cross_all:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 1000
+        sbp_all:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 1000
+        binned_spikes_all:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 100
+        thresh_cross_old:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 1000
+        sbp_old:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 1000
+        binned_spikes_old:
+          enable: True
+          sync: ["nsp_idx_1"]
+          rate: 100
 
   - nickname: saveRDB
     name: saveRDB.py
