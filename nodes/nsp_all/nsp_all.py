@@ -189,6 +189,9 @@ class NSP_all(BRANDNode):
 
         self.enable_profiler = self.parameters.setdefault("enable_profiler", False)
 
+        self.time_warn_ns = self.parameters.setdefault("time_warn_ms", 2) * 1e6
+        self.time_warn_thresh = self.parameters.setdefault("time_warn_thresh_pct", 1)/100
+
 
     def load_thresholds_from_file(self, thresholds_file):
         tf_chans = self.th_chans
@@ -440,6 +443,10 @@ class NSP_all(BRANDNode):
         input_id ='$'
         t_start_bin =0
 
+        # counter for number of non-realtime samples
+        behind_rt_buffer = [0] * 1000
+        behind_rt_buffer_index = 0
+
         while True:
 
             ########################################### READ FROM REDIS ###########################################
@@ -491,7 +498,6 @@ class NSP_all(BRANDNode):
                         neural_data_reref[n:n+self.n_split,:] = np.dot(self.coefs[n:n+self.n_split,:], neural_data[:])
                         n += self.n_split
 
-                    reref_dict[self.reref_ts_key] = time_now()
                     self.profiler.record("Re-referencing", time.perf_counter() - t0)
 
                     data_buffer[:] = neural_data_reref[self.n_range,:]
@@ -579,6 +585,8 @@ class NSP_all(BRANDNode):
 
 
                 cross_now =get_threshold_crossing(crossings,filt_buffer,thresholds,cross_now) #slightly faster
+                if self.cross_ts_key in cross_dict and time.monotonic_ns() - np.frombuffer(cross_dict[self.cross_ts_key], dtype=np.uint64) > self.time_warn_ns:
+                    behind_rt_buffer[behind_rt_buffer_index] = 1
                 cross_dict[self.cross_ts_key] = time_now()
 
                 # check for coincident crossings
@@ -598,6 +606,8 @@ class NSP_all(BRANDNode):
 
                 power_buffer = get_spike_bandpower(filt_buffer, power_buffer, self.logscale) #slightly faster 
 
+                if self.power_ts_key in power_dict and time.monotonic_ns() - np.frombuffer(power_dict[self.power_ts_key], dtype=np.uint64) > self.time_warn_ns:
+                    behind_rt_buffer[behind_rt_buffer_index] = 1
                 power_dict[self.power_ts_key] = time_now()
                 self.profiler.record("Spike band power", time.perf_counter() - t0)
 
@@ -629,7 +639,7 @@ class NSP_all(BRANDNode):
 
                 # write reref_neural if enabled
                 if self.output_reref and self.compute_reref:
-                    reref_dict = {k: v for k, v in entry_data.items()}  
+                    reref_dict = {k: v for k, v in entry_data.items()}
                     reref_dict[self.reref_ts_key] = time_now()
                     reref_dict[self.neural_data_field] = neural_data_reref.astype(self.output_dtype).tobytes()
                     p.xadd(self.reref_stream, reref_dict, maxlen=self.reref_maxlen, approximate=True)
@@ -697,6 +707,13 @@ class NSP_all(BRANDNode):
                 
                 self.profiler.record("Redis write", time.perf_counter() - t0)
                 self.profiler.record("Total Time", time.perf_counter() - t_start)
+
+                # check for non-realtime samples
+                behind_rt_buffer_index += 1
+                if behind_rt_buffer_index == len(behind_rt_buffer):
+                    behind_rt_buffer_index = 0
+                    if sum(behind_rt_buffer) > self.time_warn_thresh*len(behind_rt_buffer):
+                        logging.warning(f"More than {self.time_warn_thresh*100}% of the last {len(behind_rt_buffer)} samples are falling behind realtime deadlines")
             
 
             elif len(xread_receive) == 0:
