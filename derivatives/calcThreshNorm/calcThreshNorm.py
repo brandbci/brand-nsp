@@ -192,6 +192,16 @@ else:
 
 logscale_bp = graph_params.get('logscale_bp', False)
 
+# what bp reduction function to use
+if 'bp_reduction_fn' in graph_params:
+    bp_reduction_fn = graph_params['bp_reduction_fn']
+    if not isinstance(bp_reduction_fn, str):
+        logging.error(f'\'bp_reduction_fn\' must be of type \'str\', but it was {bp_reduction_fn}. Exiting')
+        sys.exit(1)
+else:
+    bp_reduction_fn = 'sum'
+bp_reduction_fn = getattr(np, bp_reduction_fn)
+
 if 'ch_mask_stream' in graph_params:
     ch_mask_entry = r.xrevrange(graph_params['ch_mask_stream'], '+', '-', count=1)
     if ch_mask_entry:
@@ -545,13 +555,13 @@ thresholds = (thresh_mult *
 
 crossings = ((all_data[:, :-1] > thresholds) & (all_data[:, 1:] <= thresholds))
 
-def bin_data(data, bin_width):
+def bin_data(data, bin_width, reduce_fn=np.sum):
     n_samples, n_chans = data.shape
     # samples that fit evenly into a bin
     b_samples = bin_width * (n_samples // bin_width)
     # bin the data
-    binned_data = data[:b_samples, :].reshape(-1, bin_width,
-                                              n_chans).sum(axis=1)
+    binned_data = reduce_fn(data[:b_samples, :].reshape(-1, bin_width,
+                                              n_chans), axis=1)
     return binned_data
 
 # accumulate in 1 ms bins, then in bin_size ms bins
@@ -562,8 +572,8 @@ if norm_bp:
     power = all_data[:, 1:].T**2
     if logscale_bp:
         power = 10 * np.log10(power)
-    binned_bp = bin_data(power, int(samp_freq * bin_size / 1e3)) / (
-        samp_freq / 1e3)  # equivalent to bpExtraction node, divide by 30
+    binned_bp = bin_data(power, int(samp_freq / 1e3), reduce_fn=np.mean)
+    binned_bp = bin_data(binned_bp, bin_size, reduce_fn=bp_reduction_fn)
     binned = np.hstack((binned, binned_bp))
 
 def exponential_moving_average(data, alpha):
