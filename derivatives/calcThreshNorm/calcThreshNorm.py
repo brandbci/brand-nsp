@@ -408,7 +408,7 @@ all_data = unshuffle_matrix @ all_data
 # check for nonvarying channels
 nonvarying_ch = np.argwhere(np.all(all_data[:, 1:] == all_data[:, :-1], axis=1)).flatten()
 if len(nonvarying_ch) > 0:
-    logging.warning(f'Found nonvarying channels: {nonvarying_ch.tolist()}')
+    logging.warning(f'Found nonvarying channels (unshuffled): {nonvarying_ch.tolist()}')
 
 # remove nonvarying channels from rereference groups
 for g_idx in range(len(reref_groups)):
