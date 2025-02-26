@@ -405,6 +405,15 @@ logging.info(f'Processing {all_data.shape[1]} samples of data')
 # unshuffle data
 all_data = unshuffle_matrix @ all_data
 
+# check for nonvarying channels
+nonvarying_ch = np.argwhere(np.all(all_data[:, 1:] == all_data[:, :-1], axis=1)).flatten()
+if len(nonvarying_ch) > 0:
+    logging.warning(f'Found nonvarying channels (unshuffled): {nonvarying_ch.tolist()}')
+
+# remove nonvarying channels from rereference groups
+for g_idx in range(len(reref_groups)):
+    reref_groups[g_idx] = list(set(reref_groups[g_idx]).difference(set(nonvarying_ch)))
+
 
 ###############################################
 # Filter if requested
@@ -491,6 +500,10 @@ def calc_lrr_params_parallel(channel, group, decimate=1):
     """
     grp = np.setdiff1d(group, channel)
 
+    # ignore nonvarying channels
+    if channel in nonvarying_ch:
+        return channel, grp, np.zeros(len(grp))
+    
     X = all_data[grp, ::decimate].T
     y = all_data[channel, ::decimate].reshape(1, -1)
     params = np.linalg.solve(X.T @ X, X.T @ y.T).T
@@ -537,6 +550,7 @@ logging.debug('Finished rereferencing')
 thresholds = (thresh_mult *
                 np.sqrt(np.mean(np.square(all_data), axis=1))).reshape(
                     -1, 1)
+thresholds[nonvarying_ch] = -1e6 # so crossings are never triggered
 
 
 ###############################################
@@ -561,6 +575,8 @@ binned = bin_data(binned, bin_size)
 if norm_bp:
     power = all_data[:, 1:].T**2
     if logscale_bp:
+        # squash values that will become negative
+        power[power < 1] = 1
         power = 10 * np.log10(power)
     binned_bp = bin_data(power, int(samp_freq * bin_size / 1e3)) / (
         samp_freq / 1e3)  # equivalent to bpExtraction node, divide by 30
