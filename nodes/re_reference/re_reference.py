@@ -46,6 +46,8 @@ class reReference(BRANDNode):
             self.ts_field = self.parameters['ts_field'] 
         else:
             self.ts_field = 'BRANDS_time'
+
+        self.maxlen = self.parameters.setdefault('maxlen', 2000)
         
         self.nsp_ts_field = self.parameters.setdefault('nsp_ts_field', 'timestamps').encode()
         self.nsp_ts_dtype = self.parameters.setdefault('nsp_ts_dtype', 'uint64')
@@ -143,7 +145,7 @@ class reReference(BRANDNode):
                     self.output_dict[self.neural_data_field] = self.neural_data_reref.astype(self.output_dtype).tobytes()
             
             # write to Redis
-            self.r.xadd(self.output_stream_name, self.output_dict)
+            self.r.xadd(self.output_stream_name, self.output_dict, maxlen=self.maxlen, approximate=True)
 
 if __name__ == '__main__':
     gc.disable()  # disable garbage collection
