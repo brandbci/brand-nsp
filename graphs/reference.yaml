@@ -1,0 +1,91 @@
+# graph parameters
+parameters:
+  nsp_channels: &nsp_channels 256
+
+# node-specific parameters
+nodes:
+  - name: centrals_interface
+    nickname: centrals_interface
+    module: ../brand-modules/brand-nsp
+    machine: gpc
+    run_priority: 99
+    parameters:
+      log: INFO
+      env_file_path: /samba/tmp/BRAND/environment.sh
+
+  - name: re_reference
+    nickname: re_ref
+    machine: brand
+    module: ../brand-modules/brand-nsp
+    run_priority: 99
+    cpu_affinity: 23
+    parameters:
+      log: INFO
+      input_stream_name: nsp_neural
+      output_stream_name: reref_neural
+      coefs_stream_name: rereference_parameters
+      chan_per_stream: *nsp_channels
+      samp_per_stream: 30
+      chan_total: *nsp_channels
+      start_channel: 0
+      output_dtype: float32
+
+  - name: cerebusAdapterGem
+    nickname: nsp_in
+    module: ../brand-modules/brand-nsp
+    machine: brand
+    run_priority: 99
+    cpu_affinity: 4-5
+    redis_outputs:
+      nsp_neural: ContinuousNeural
+    parameters:
+      broadcast_ip: 192.168.137.255
+      broadcast_port: 51002
+      broadcast_device: enp3s0f0
+      num_streams: 1
+      stream_names: [nsp_neural]
+      samp_freq: [30000]
+      packet_type: [5]
+      chan_per_stream: [*nsp_channels]
+      samp_per_stream: [30]
+
+derivatives:
+  - name: calcThreshNorm.py
+    nickname: calcThreshNorm
+    module: ../brand-modules/brand-nsp
+    autorun_step: 0
+    parameters:
+      input_stream_name: ["nsp_neural"]
+      input_stream_key: ["samples"]
+      filter_first: True
+      CAR_group_sizes: 64
+      norm_bp: True
+      thresh_mult: -4.5
+      butter_lowercut: 250
+      butter_uppercut: ~
+      ch_mask_stream: z_mask_stream
+      rereference: lrr
+      decimate: 1
+      bin_size: 20
+      ema_alpha: 0.8
+      unshuffle_file: "../config/t16/t16_electrode_mapping.json"
+
+  - name: saveRDB.py
+    nickname: saveRDB
+    module: ../brand-modules/brand-export
+    autorun_step: 9
+    parameters:
+      flush_streams_before_save: [reref_neural]
+      flush_rdb_after_save: True
+      flush_rdb_except_streams:
+        [
+          thresholds,
+          normalization_parameters,
+          normalize_exit_parameters,
+          z_mask_stream,
+          rereference_parameters,
+          nwb_file_stream,
+          claus_path,
+          array_mask,
+          button_info_stream,
+        ]
